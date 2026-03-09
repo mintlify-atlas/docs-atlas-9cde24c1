@@ -1,0 +1,497 @@
+---
+title: Model Context Protocol (MCP)
+description: Connect to MCP servers to extend agent capabilities with external tools and resources
+---
+
+# Model Context Protocol Integration
+
+AgentOS includes a Model Context Protocol (MCP) client that allows agents to connect to external MCP servers and use their tools. MCP provides a standardized way to extend LLM capabilities with external data sources, APIs, and services.
+
+## Overview
+
+Implemented in `src/mcp-client.ts:1`, the MCP integration provides:
+
+- **Stdio and SSE transports** for connecting to MCP servers
+- **Tool discovery** via the `tools/list` RPC method
+- **Tool invocation** with automatic request/response handling
+- **Connection management** with automatic cleanup
+- **MCP server mode** - Expose AgentOS functions as MCP tools
+
+## What is MCP?
+
+Model Context Protocol is a standard for connecting AI assistants to external tools and data sources. An MCP server exposes:
+
+- **Tools** - Functions the LLM can call
+- **Resources** - Data sources the LLM can read
+- **Prompts** - Pre-built prompt templates
+
+AgentOS focuses on the **tools** capability.
+
+## Available Integrations
+
+From `workspace/source/integrations/`, AgentOS includes 25+ pre-configured MCP integrations:
+
+<CardGroup cols={3}>
+  <Card title="GitHub" icon="github">
+    Repository management, PRs, issues
+  </Card>
+  <Card title="GitLab" icon="gitlab">
+    Project management, pipelines, merge requests
+  </Card>
+  <Card title="Slack" icon="slack">
+    Send messages, read channels
+  </Card>
+  <Card title="Discord" icon="discord">
+    Bot integration, channel management
+  </Card>
+  <Card title="Jira" icon="jira">
+    Issue tracking, project management
+  </Card>
+  <Card title="Linear" icon="linear">
+    Issue tracking, roadmap planning
+  </Card>
+  <Card title="Notion" icon="notion">
+    Knowledge base, database queries
+  </Card>
+  <Card title="Google Drive" icon="google-drive">
+    File access, document management
+  </Card>
+  <Card title="Gmail" icon="envelope">
+    Email sending, inbox reading
+  </Card>
+  <Card title="Google Calendar" icon="calendar">
+    Event creation, schedule management
+  </Card>
+  <Card title="AWS" icon="aws">
+    S3, EC2, Lambda management
+  </Card>
+  <Card title="Azure" icon="microsoft">
+    Azure resource management
+  </Card>
+  <Card title="GCP" icon="google">
+    Google Cloud operations
+  </Card>
+  <Card title="PostgreSQL" icon="database">
+    Database queries, schema inspection
+  </Card>
+  <Card title="MongoDB" icon="mongodb">
+    Document queries, collection management
+  </Card>
+  <Card title="Redis" icon="redis">
+    Cache operations, pub/sub
+  </Card>
+  <Card title="Elasticsearch" icon="elasticsearch">
+    Search, indexing, analytics
+  </Card>
+  <Card title="SQLite" icon="database">
+    Local database access
+  </Card>
+  <Card title="Sentry" icon="sentry">
+    Error tracking, issue management
+  </Card>
+  <Card title="Dropbox" icon="dropbox">
+    File storage, sharing
+  </Card>
+  <Card title="Brave Search" icon="brave">
+    Web search API
+  </Card>
+  <Card title="Exa Search" icon="magnifying-glass">
+    Semantic search
+  </Card>
+  <Card title="Bitbucket" icon="bitbucket">
+    Repository management
+  </Card>
+  <Card title="Microsoft Teams" icon="microsoft">
+    Chat, channel management
+  </Card>
+  <Card title="Todoist" icon="list-check">
+    Task management
+  </Card>
+</CardGroup>
+
+## Connecting to an MCP Server
+
+<Steps>
+  <Step title="Connect via Stdio">
+    For MCP servers that run as local processes:
+
+    ```typescript
+    import { trigger } from "iii-sdk";
+
+    await trigger("mcp::connect", {
+      name: "github",
+      transport: "stdio",
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-github"]
+    });
+    ```
+
+    From `src/mcp-client.ts:138-163`, this:
+    - Validates the command for security
+    - Spawns the process with stripped environment variables
+    - Parses stdout for JSON-RPC messages
+    - Calls `initialize` to negotiate capabilities
+    - Calls `tools/list` to discover available tools
+  </Step>
+
+  <Step title="Connect via SSE">
+    For MCP servers that expose HTTP endpoints:
+
+    ```typescript
+    await trigger("mcp::connect", {
+      name: "remote-tools",
+      transport: "sse",
+      url: "https://mcp-server.example.com/sse"
+    });
+    ```
+
+    Note: SSE transport is defined but not fully implemented in the current version.
+  </Step>
+
+  <Step title="List discovered tools">
+    ```typescript
+    const { tools } = await trigger("mcp::list_tools", {});
+
+    console.log(`Discovered ${tools.length} tools:`);
+    for (const tool of tools) {
+      console.log(`- [${tool.server}] ${tool.name}: ${tool.description}`);
+    }
+    ```
+
+    Tools are namespaced as `mcp_{server}_{toolName}` (see `src/mcp-client.ts:267`).
+  </Step>
+</Steps>
+
+## Calling MCP Tools
+
+```typescript
+const result = await trigger("mcp::call_tool", {
+  server: "github",
+  tool: "create_issue",
+  arguments: {
+    owner: "iii-hq",
+    repo: "agentos",
+    title: "Add MCP integration tests",
+    body: "We need comprehensive tests for the MCP client",
+    labels: ["testing", "mcp"]
+  }
+});
+
+console.log(result);
+```
+
+From `src/mcp-client.ts:277-304`, the client:
+1. Validates the server connection exists
+2. Checks the tool is available
+3. Sends `tools/call` RPC to the MCP server
+4. Logs the invocation to security audit
+5. Returns the result
+
+## Managing Connections
+
+### List Active Connections
+
+```typescript
+const { connections, count } = await trigger("mcp::list_connections", {});
+
+console.log(`${count} active MCP connections:`);
+for (const conn of connections) {
+  console.log(`- ${conn.name}: ${conn.toolCount} tools (uptime: ${conn.uptime}ms)`);
+}
+```
+
+From `src/mcp-client.ts:313-325`, this returns:
+- Connection ID
+- Server name
+- Transport type
+- Tool count
+- Connection timestamp
+- Uptime in milliseconds
+
+### Disconnect from a Server
+
+```typescript
+await trigger("mcp::disconnect", {
+  name: "github"
+});
+```
+
+From `src/mcp-client.ts:212-244`, this:
+- Terminates the child process (SIGTERM)
+- Removes the connection from the map
+- Deletes state storage
+- Rejects all pending RPC requests
+
+## MCP Server Mode
+
+Expose AgentOS functions as MCP tools to external clients:
+
+<Steps>
+  <Step title="Define tools to expose">
+    ```typescript
+    const exposedTools = [
+      {
+        name: "web_search",
+        description: "Search the web for information",
+        functionId: "tool::web_search",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query" },
+            limit: { type: "number", description: "Max results" }
+          },
+          required: ["query"]
+        }
+      },
+      {
+        name: "agent_chat",
+        description: "Chat with an AgentOS agent",
+        functionId: "agent::chat",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agentId: { type: "string" },
+            message: { type: "string" }
+          },
+          required: ["agentId", "message"]
+        }
+      }
+    ];
+    ```
+  </Step>
+
+  <Step title="Start the MCP server">
+    ```typescript
+    await trigger("mcp::serve", {
+      tools: exposedTools
+    });
+
+    console.log("AgentOS is now an MCP server at http://localhost:3111/mcp/rpc");
+    ```
+
+    From `src/mcp-client.ts:328-433`, this:
+    - Registers a handler function for MCP JSON-RPC requests
+    - Handles `initialize`, `tools/list`, and `tools/call` methods
+    - Maps tool calls to AgentOS trigger invocations
+    - Exposes an HTTP endpoint at `/mcp/rpc`
+  </Step>
+
+  <Step title="Stop serving">
+    ```typescript
+    await trigger("mcp::unserve", {});
+    ```
+  </Step>
+</Steps>
+
+## Real-World Example: GitHub Integration
+
+```typescript
+// Connect to GitHub MCP server
+await trigger("mcp::connect", {
+  name: "github",
+  transport: "stdio",
+  command: "npx",
+  args: [
+    "-y",
+    "@modelcontextprotocol/server-github",
+    "--token",
+    process.env.GITHUB_TOKEN
+  ]
+});
+
+// List available GitHub tools
+const { tools } = await trigger("mcp::list_tools", {});
+const githubTools = tools.filter(t => t.server === "github");
+
+console.log("GitHub tools:", githubTools.map(t => t.name));
+// ["create_issue", "list_issues", "create_pull_request", "search_repositories", ...]
+
+// Search for repositories
+const repos = await trigger("mcp::call_tool", {
+  server: "github",
+  tool: "search_repositories",
+  arguments: {
+    query: "agent framework language:typescript",
+    sort: "stars",
+    limit: 5
+  }
+});
+
+console.log("Top agent frameworks:", repos);
+
+// Create an issue
+const issue = await trigger("mcp::call_tool", {
+  server: "github",
+  tool: "create_issue",
+  arguments: {
+    owner: "iii-hq",
+    repo: "agentos",
+    title: "Add PostgreSQL MCP integration",
+    body: "Users want to query databases from agents",
+    labels: ["enhancement", "database"]
+  }
+});
+
+console.log(`Created issue #${issue.number}`);
+
+// Clean up
+await trigger("mcp::disconnect", { name: "github" });
+```
+
+## JSON-RPC Implementation
+
+From `src/mcp-client.ts:60-99`, the client implements JSON-RPC 2.0:
+
+```typescript
+function sendRpc(
+  conn: McpConnection,
+  method: string,
+  params?: Record<string, unknown>
+): Promise<unknown> {
+  const id = conn.nextRpcId++;
+  const message = { jsonrpc: "2.0", id, method, params };
+  
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingRequests.delete(`${conn.id}:${id}`);
+      reject(new Error(`RPC timeout: ${method}`));
+    }, 30_000);
+
+    pendingRequests.set(`${conn.id}:${id}`, { resolve, reject, timer });
+
+    if (conn.transport === "stdio" && conn.process?.stdin?.writable) {
+      conn.process.stdin.write(JSON.stringify(message) + "\n");
+    }
+  });
+}
+```
+
+Responses are parsed from stdout and matched to pending requests (see `src/mcp-client.ts:101-109`).
+
+## Security
+
+<AccordionGroup>
+  <Accordion title="Command Validation">
+    From `src/mcp-client.ts:140`, all MCP commands are validated with `validateMcpCommand()` to prevent command injection.
+  </Accordion>
+
+  <Accordion title="Environment Stripping">
+    Child processes run with stripped environment variables (`stripSecretsFromEnv()`) to prevent credential leakage.
+  </Accordion>
+
+  <Accordion title="Authentication Required">
+    All MCP endpoints require authentication via `requireAuth()` (see `src/mcp-client.ts:118`).
+  </Accordion>
+
+  <Accordion title="Audit Logging">
+    All MCP operations are logged to the security audit trail:
+    - `mcp_connect` - Connection established
+    - `mcp_disconnect` - Connection closed
+    - `mcp_tool_call` - Tool invocation
+  </Accordion>
+</AccordionGroup>
+
+## HTTP API Endpoints
+
+```bash
+# Connect to MCP server
+curl -X POST http://localhost:3111/api/mcp/connect \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "github",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-github"]
+  }'
+
+# List connections
+curl http://localhost:3111/api/mcp/connections
+
+# List tools
+curl http://localhost:3111/api/mcp/tools
+
+# Call a tool
+curl -X POST http://localhost:3111/api/mcp/call \
+  -d '{
+    "server": "github",
+    "tool": "create_issue",
+    "arguments": {
+      "owner": "iii-hq",
+      "repo": "agentos",
+      "title": "Test issue"
+    }
+  }'
+
+# Disconnect
+curl -X POST http://localhost:3111/api/mcp/disconnect \
+  -d '{ "name": "github" }'
+
+# Start MCP server mode
+curl -X POST http://localhost:3111/api/mcp/serve \
+  -d '{ "tools": [...] }'
+
+# Stop MCP server mode
+curl -X POST http://localhost:3111/api/mcp/unserve
+```
+
+## CLI Commands
+
+From the README:
+
+```bash
+agentos mcp                     # Start in MCP server mode
+agentos integrations [query]    # Browse available integrations
+agentos add <name> [--key K]    # Add an integration
+agentos remove <name>           # Remove an integration
+```
+
+## MCP Protocol Specification
+
+AgentOS implements MCP protocol version `2024-11-05` with:
+
+- **Initialize**: `{ protocolVersion, capabilities, clientInfo }`
+- **Tools/List**: Returns array of `{ name, description, inputSchema }`
+- **Tools/Call**: `{ name, arguments }` → `{ content: [...] }`
+
+See the [Model Context Protocol specification](https://modelcontextprotocol.io/specification) for full details.
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="One Connection per Integration" icon="plug">
+    Don't create multiple connections to the same MCP server
+  </Card>
+  <Card title="Handle Connection Failures" icon="circle-exclamation">
+    MCP processes can crash. Monitor and reconnect as needed
+  </Card>
+  <Card title="Namespace Tools" icon="tags">
+    Tools are automatically namespaced as `mcp_{server}_{tool}`
+  </Card>
+  <Card title="Clean Up Connections" icon="broom">
+    Disconnect when done to free resources
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<Accordion title="Connection timeout">
+  The MCP server process may not be starting. Check that the command and args are correct, and that required packages are installed.
+</Accordion>
+
+<Accordion title="Tool not found">
+  Use `mcp::list_tools` to see what tools are actually available. Tool names must match exactly.
+</Accordion>
+
+<Accordion title="RPC timeout">
+  The MCP server isn't responding. Check if the process is still running and hasn't crashed.
+</Accordion>
+
+<Accordion title="Environment variables missing">
+  Many MCP servers need API tokens. Pass them via args or ensure they're in the environment before starting AgentOS.
+</Accordion>
+
+## Related Features
+
+- [A2A Protocol](/advanced/a2a-protocol) - Connect AgentOS instances together
+- [SkillKit](/advanced/skillkit) - Alternative to MCP for extending agent capabilities
+- [Tools](/core-concepts/tools) - Built-in AgentOS tools

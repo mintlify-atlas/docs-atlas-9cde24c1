@@ -1,0 +1,378 @@
+---
+title: 'Hierarchy'
+description: 'Cycle-safe agent organizational structure with capability search'
+---
+
+The **Hierarchy** crate manages agent organizational structures within realms. It provides cycle-safe tree building, capability-based search, and chain-of-command resolution.
+
+## Overview
+
+- **Purpose:** Agent org structure with cycle detection
+- **LOC:** ~250
+- **Functions:** 5 (set, tree, find, chain, remove)
+- **Endpoints:** 5 REST
+- **Source:** `crates/hierarchy/src/main.rs`
+
+## Core Concepts
+
+### Hierarchy Node
+
+```rust
+struct HierarchyNode {
+    agent_id: String,
+    realm_id: String,
+    reports_to: Option<String>,    // Parent agent ID
+    title: Option<String>,          // "CEO", "Engineering Lead", etc.
+    capabilities: Vec<String>,      // ["coding", "review", "planning"]
+    rank: u32,                      // 0-10, higher = more authority
+}
+```
+
+### Organizational Tree
+
+```
+agent-ceo (rank: 10)
+├── agent-cto (rank: 8)
+│   ├── agent-dev-1 (rank: 5)
+│   └── agent-dev-2 (rank: 5)
+└── agent-cfo (rank: 8)
+    └── agent-accountant (rank: 4)
+```
+
+## Functions
+
+### hierarchy::set
+
+Add or update an agent's position in the hierarchy.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="agentId" type="string" required>
+  Agent identifier
+</ParamField>
+
+<ParamField path="reportsTo" type="string">
+  Parent agent ID (null for root nodes)
+</ParamField>
+
+<ParamField path="title" type="string">
+  Organizational title
+</ParamField>
+
+<ParamField path="capabilities" type="array">
+  List of capabilities (skills, roles)
+</ParamField>
+
+<ParamField path="rank" type="number" default={0}>
+  Authority rank (0-10)
+</ParamField>
+
+**Example:**
+
+```rust
+// Create CEO (root node)
+iii.trigger("hierarchy::set", json!({
+    "realmId": "r-1",
+    "agentId": "agent-ceo",
+    "title": "CEO",
+    "capabilities": ["leadership", "strategy"],
+    "rank": 10
+})).await?;
+
+// Create CTO reporting to CEO
+iii.trigger("hierarchy::set", json!({
+    "realmId": "r-1",
+    "agentId": "agent-cto",
+    "reportsTo": "agent-ceo",
+    "title": "CTO",
+    "capabilities": ["architecture", "hiring"],
+    "rank": 8
+})).await?;
+
+// Create developer reporting to CTO
+iii.trigger("hierarchy::set", json!({
+    "realmId": "r-1",
+    "agentId": "agent-dev-1",
+    "reportsTo": "agent-cto",
+    "title": "Senior Engineer",
+    "capabilities": ["rust", "typescript", "code-review"],
+    "rank": 5
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+POST /api/hierarchy
+Content-Type: application/json
+
+{
+  "realmId": "r-1",
+  "agentId": "agent-dev-1",
+  "reportsTo": "agent-cto",
+  "title": "Senior Engineer",
+  "capabilities": ["rust", "typescript"],
+  "rank": 5
+}
+```
+
+**Cycle Detection from hierarchy/src/main.rs:48-69:**
+
+```rust
+fn would_create_cycle(nodes: &[HierarchyNode], agent_id: &str, new_parent: &str) -> bool {
+    let parent_map: HashMap<&str, &str> = nodes
+        .iter()
+        .filter_map(|n| n.reports_to.as_deref().map(|p| (n.agent_id.as_str(), p)))
+        .collect();
+
+    let mut visited = HashSet::new();
+    let mut current = new_parent;
+
+    loop {
+        if current == agent_id {
+            return true;  // Cycle detected!
+        }
+        if !visited.insert(current) {
+            return true;  // Infinite loop detected
+        }
+        match parent_map.get(current) {
+            Some(&parent) => current = parent,
+            None => return false,
+        }
+    }
+}
+```
+
+<Note>
+  The cycle detection algorithm prevents scenarios like:
+  - Agent A reports to Agent B
+  - Agent B reports to Agent A
+  - Agent A reports to itself
+</Note>
+
+### hierarchy::tree
+
+Get the full organizational tree or a subtree.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="rootAgentId" type="string">
+  Optional: Get subtree rooted at this agent
+</ParamField>
+
+**Example:**
+
+```rust
+// Get full tree
+let tree = iii.trigger("hierarchy::tree", json!({
+    "realmId": "r-1"
+})).await?;
+
+// Returns:
+// {
+//   "roots": [
+//     {
+//       "agentId": "agent-ceo",
+//       "title": "CEO",
+//       "capabilities": ["leadership"],
+//       "rank": 10,
+//       "reports": [
+//         {
+//           "agentId": "agent-cto",
+//           "title": "CTO",
+//           "rank": 8,
+//           "reports": [ ... ]
+//         }
+//       ]
+//     }
+//   ]
+// }
+
+// Get subtree for specific agent
+let subtree = iii.trigger("hierarchy::tree", json!({
+    "realmId": "r-1",
+    "rootAgentId": "agent-cto"
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+GET /api/hierarchy/r-1/tree
+GET /api/hierarchy/r-1/tree?rootAgentId=agent-cto
+```
+
+**Tree Building Algorithm (hierarchy/src/main.rs:99-131):**
+
+Uses depth-first search with cycle protection:
+
+```rust
+fn build_tree<'a>(
+    agent_id: &str,
+    nodes: &'a [HierarchyNode],
+    children_map: &HashMap<Option<&str>, Vec<&'a HierarchyNode>>,
+    visited: &mut HashSet<String>,
+) -> TreeNode {
+    let node = nodes.iter().find(|n| n.agent_id == agent_id);
+    let title = node.and_then(|n| n.title.clone());
+    let caps = node.map(|n| n.capabilities.clone()).unwrap_or_default();
+    let rank = node.map(|n| n.rank).unwrap_or(0);
+
+    let reports = if visited.insert(agent_id.to_string()) {
+        children_map
+            .get(&Some(agent_id))
+            .map(|children| {
+                children
+                    .iter()
+                    .map(|c| build_tree(&c.agent_id, nodes, children_map, visited))
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        vec![]  // Stop at cycles
+    };
+
+    TreeNode { agent_id: agent_id.to_string(), title, capabilities: caps, rank, reports }
+}
+```
+
+### hierarchy::find
+
+Find agents by capability.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="capability" type="string" required>
+  Capability to search for (case-insensitive)
+</ParamField>
+
+**Example:**
+
+```rust
+let matches = iii.trigger("hierarchy::find", json!({
+    "realmId": "r-1",
+    "capability": "code-review"
+})).await?;
+
+// Returns:
+// {
+//   "matches": [
+//     { "agentId": "agent-dev-1", "title": "Senior Engineer", ... },
+//     { "agentId": "agent-dev-3", "title": "Tech Lead", ... }
+//   ],
+//   "count": 2
+// }
+```
+
+**REST Endpoint:**
+```bash
+GET /api/hierarchy/r-1/find?capability=code-review
+```
+
+### hierarchy::chain
+
+Get chain of command (reports-to path to root).
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="agentId" type="string" required>
+  Agent to trace chain for
+</ParamField>
+
+**Example:**
+
+```rust
+let chain = iii.trigger("hierarchy::chain", json!({
+    "realmId": "r-1",
+    "agentId": "agent-dev-1"
+})).await?;
+
+// Returns:
+// {
+//   "chain": [
+//     { "agentId": "agent-dev-1", "title": "Senior Engineer", "reportsTo": "agent-cto" },
+//     { "agentId": "agent-cto", "title": "CTO", "reportsTo": "agent-ceo" },
+//     { "agentId": "agent-ceo", "title": "CEO", "reportsTo": null }
+//   ]
+// }
+```
+
+**REST Endpoint:**
+```bash
+GET /api/hierarchy/r-1/chain/agent-dev-1
+```
+
+### hierarchy::remove
+
+Remove agent from hierarchy.
+
+<Warning>
+  This does not cascade. Child agents will become orphaned (reportsTo still set, but parent missing).
+</Warning>
+
+```rust
+iii.trigger("hierarchy::remove", json!({
+    "realmId": "r-1",
+    "agentId": "agent-dev-1"
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+DELETE /api/hierarchy/r-1/agent-dev-1
+```
+
+## Storage
+
+Hierarchy uses scope: `realm:{realmId}:hierarchy`
+
+Each node stored as: `key=agentId, value=HierarchyNode`
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Reporting Structure" icon="diagram-project">
+    Model your organization's reporting hierarchy for escalation and delegation.
+  </Card>
+  <Card title="Capability Routing" icon="route">
+    Route tasks to agents with specific capabilities ("rust", "ui-design").
+  </Card>
+  <Card title="Authority Levels" icon="ranking-star">
+    Use rank to determine approval authority and override permissions.
+  </Card>
+  <Card title="Team Discovery" icon="magnifying-glass">
+    Find all agents under a specific manager for team operations.
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Start with root nodes">
+    Create top-level agents (CEO, department heads) before adding reports.
+  </Step>
+  
+  <Step title="Use meaningful capabilities">
+    Tag agents with searchable skills: `["python", "ml", "data-analysis"]`
+  </Step>
+  
+  <Step title="Set appropriate ranks">
+    Use 0-10 scale: 10=executive, 7-8=manager, 4-6=senior, 1-3=junior.
+  </Step>
+  
+  <Step title="Handle orphans">
+    When removing managers, reassign their reports first.
+  </Step>
+</Steps>
+
+## Related
+
+- [Realm](/control-plane/realm) - Create isolated hierarchy environments
+- [Directive](/control-plane/directive) - Assign goals by hierarchy level
+- [Mission](/control-plane/mission) - Assign tasks based on capabilities

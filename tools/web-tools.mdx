@@ -1,0 +1,498 @@
+---
+title: "Web Tools"
+description: "Web search, HTTP fetching, and browser automation with SSRF protection and rate limiting"
+---
+
+AgentOS provides 4 web tools with security-first design, including SSRF protection, timeout enforcement, and HTML-to-text conversion.
+
+## Available Tools
+
+### web_search
+
+Multi-provider web search with automatic fallback.
+
+<ParamField path="query" type="string" required>
+  Search query string
+</ParamField>
+
+<ParamField path="provider" type="string">
+  Search provider: `"tavily"`, `"brave"`, or `"duckduckgo"` (default)
+</ParamField>
+
+<ParamField path="maxResults" type="number">
+  Maximum results to return (default: 5)
+</ParamField>
+
+<ResponseField name="results" type="array">
+  Array of search results:
+  - `title` (string) — result title
+  - `url` (string) — result URL
+  - `content` (string) — snippet or description
+</ResponseField>
+
+<ResponseField name="provider" type="string">
+  Provider used: "tavily", "brave", or "duckduckgo"
+</ResponseField>
+
+**Example:**
+
+```typescript
+const result = await trigger("tool::web_search", {
+  query: "iii-engine documentation",
+  provider: "brave",
+  maxResults: 3
+});
+
+// => {
+//   results: [
+//     {
+//       title: "iii-engine - Function orchestration framework",
+//       url: "https://iii.dev/docs",
+//       content: "iii-engine is a polyglot function orchestration framework..."
+//     },
+//     // ...
+//   ],
+//   provider: "brave"
+// }
+```
+
+**Provider Selection:**
+
+1. **Tavily** — Requires `TAVILY_API_KEY` environment variable
+   - Enterprise search API
+   - Best for production use
+   - POST to `https://api.tavily.com/search`
+
+2. **Brave** — Requires `BRAVE_API_KEY` environment variable
+   - Fast, privacy-focused search
+   - GET `https://api.search.brave.com/res/v1/web/search`
+   - Includes web results, news, and images
+
+3. **DuckDuckGo** — No API key required (fallback)
+   - Free instant answer API
+   - GET `https://api.duckduckgo.com/?format=json`
+   - Limited to "RelatedTopics" results
+
+**Implementation:**
+
+```typescript
+// src/tools.ts:336-418
+if (provider === "tavily" && process.env.TAVILY_API_KEY) {
+  const resp = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: process.env.TAVILY_API_KEY,
+      query,
+      max_results: limit,
+    }),
+    signal: controller.signal,
+  });
+  const data = await resp.json();
+  return { results: data.results || [], provider: "tavily" };
+}
+
+// Falls back to DuckDuckGo if no API keys configured
+```
+
+---
+
+### web_fetch
+
+SSRF-protected HTTP fetch with HTML-to-text conversion.
+
+<ParamField path="url" type="string" required>
+  URL to fetch
+</ParamField>
+
+<ParamField path="maxSize" type="number">
+  Maximum response size in bytes (default: 500,000)
+</ParamField>
+
+<ResponseField name="url" type="string">
+  Requested URL
+</ResponseField>
+
+<ResponseField name="status" type="number">
+  HTTP status code
+</ResponseField>
+
+<ResponseField name="contentType" type="string">
+  Response content-type header
+</ResponseField>
+
+<ResponseField name="content" type="string">
+  Response body (HTML stripped if content-type is text/html)
+</ResponseField>
+
+<ResponseField name="truncated" type="boolean">
+  True if response exceeded maxSize
+</ResponseField>
+
+**Example:**
+
+```typescript
+const result = await trigger("tool::web_fetch", {
+  url: "https://example.com/api/data",
+  maxSize: 100000
+});
+
+// => {
+//   url: "https://example.com/api/data",
+//   status: 200,
+//   contentType: "application/json",
+//   content: "{...}",
+//   truncated: false
+// }
+```
+
+**HTML-to-Text Conversion:**
+
+For `text/html` responses, AgentOS strips HTML tags and converts entities:
+
+```typescript
+// src/tools.ts:594-605
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")  // Remove scripts
+    .replace(/<style[\s\S]*?<\/style>/gi, "")    // Remove styles
+    .replace(/<[^>]+>/g, " ")                      // Strip tags
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")                          // Normalize whitespace
+    .trim();
+}
+```
+
+**Security:**
+
+- **SSRF Protection** — All URLs validated by `assertNoSsrf()`
+- **Timeout** — 30-second abort controller
+- **Size Limit** — Response truncated at `maxSize`
+- **User-Agent** — Identifies as `AgentOS/0.0.1`
+
+---
+
+### browser_screenshot
+
+Capture screenshots using headless browser automation.
+
+<Note>
+Browser tools require the `browser.ts` worker and Playwright/Puppeteer installation. See [Browser Automation](/integrations/browser) for setup.
+</Note>
+
+<ParamField path="url" type="string" required>
+  URL to screenshot
+</ParamField>
+
+<ParamField path="viewport" type="object">
+  Viewport dimensions: `{ width: number, height: number }`
+</ParamField>
+
+<ParamField path="fullPage" type="boolean">
+  Capture full scrollable page (default: false)
+</ParamField>
+
+<ResponseField name="screenshot" type="string">
+  Base64-encoded PNG image
+</ResponseField>
+
+<ResponseField name="url" type="string">
+  Captured URL
+</ResponseField>
+
+**Example:**
+
+```typescript
+const result = await trigger("tool::browser_screenshot", {
+  url: "https://example.com",
+  viewport: { width: 1920, height: 1080 },
+  fullPage: true
+});
+
+// Save screenshot
+const buffer = Buffer.from(result.screenshot, "base64");
+await writeFile("screenshot.png", buffer);
+```
+
+---
+
+### browser_action
+
+Perform browser automation actions (click, type, navigate).
+
+<ParamField path="action" type="string" required>
+  Action to perform: `"navigate"`, `"click"`, `"type"`, `"wait"`
+</ParamField>
+
+<ParamField path="url" type="string">
+  URL for navigate action
+</ParamField>
+
+<ParamField path="selector" type="string">
+  CSS selector for click/type actions
+</ParamField>
+
+<ParamField path="text" type="string">
+  Text to type (for type action)
+</ParamField>
+
+<ParamField path="timeout" type="number">
+  Action timeout in milliseconds
+</ParamField>
+
+**Example:**
+
+```typescript
+// Navigate to login page
+await trigger("tool::browser_action", {
+  action: "navigate",
+  url: "https://app.example.com/login"
+});
+
+// Type username
+await trigger("tool::browser_action", {
+  action: "type",
+  selector: "#username",
+  text: "user@example.com"
+});
+
+// Click login button
+await trigger("tool::browser_action", {
+  action: "click",
+  selector: "button[type=submit]"
+});
+```
+
+---
+
+## SSRF Protection
+
+All web tools validate URLs to prevent Server-Side Request Forgery attacks:
+
+```typescript
+// src/shared/utils.ts
+export async function assertNoSsrf(url: string): Promise<void> {
+  const parsed = new URL(url);
+  
+  // Block non-HTTP(S) protocols
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`Protocol not allowed: ${parsed.protocol}`);
+  }
+  
+  // Resolve hostname to IP
+  const { address } = await dns.promises.lookup(parsed.hostname);
+  
+  // Block private/reserved IP ranges
+  const BLOCKED_RANGES = [
+    /^127\./,           // Loopback
+    /^10\./,            // Private Class A
+    /^172\.(1[6-9]|2\d|3[01])\./,  // Private Class B
+    /^192\.168\./,      // Private Class C
+    /^169\.254\./,      // Link-local
+    /^0\./,             // Reserved
+    /^::1$/,            // IPv6 loopback
+    /^fe80:/,           // IPv6 link-local
+  ];
+  
+  for (const range of BLOCKED_RANGES) {
+    if (range.test(address)) {
+      throw new Error(
+        `SSRF protection: ${url} resolves to blocked IP ${address}`
+      );
+    }
+  }
+}
+```
+
+**Blocked Requests:**
+
+```typescript
+// These will throw SSRF errors:
+await trigger("tool::web_fetch", { url: "http://127.0.0.1:8080" });
+await trigger("tool::web_fetch", { url: "http://169.254.169.254/metadata" });
+await trigger("tool::web_fetch", { url: "http://localhost/admin" });
+await trigger("tool::web_fetch", { url: "file:///etc/passwd" });
+```
+
+**Allowed Requests:**
+
+```typescript
+// These pass SSRF validation:
+await trigger("tool::web_fetch", { url: "https://api.github.com" });
+await trigger("tool::web_fetch", { url: "https://docs.iii.dev" });
+```
+
+## Rate Limiting & Timeouts
+
+### Timeout Enforcement
+
+All web tools use AbortController for timeout management:
+
+```typescript
+const controller = new AbortController();
+const timer = setTimeout(() => controller.abort(), 30_000);  // 30s
+
+try {
+  const resp = await fetch(url, {
+    signal: controller.signal,
+    headers: { "User-Agent": "AgentOS/0.0.1" }
+  });
+  // Process response...
+} finally {
+  clearTimeout(timer);
+}
+```
+
+### Size Limits
+
+- **web_fetch** — 500KB default, 100KB returned to agent (configurable)
+- **web_search** — 5 results default, max 20
+- **HTML stripping** — Reduces token overhead for LLM processing
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always specify maxResults for search">
+    Limit search results to reduce token usage:
+    
+    ```typescript
+    // Good: Request only what you need
+    const result = await trigger("tool::web_search", {
+      query: "AgentOS",
+      maxResults: 3
+    });
+    
+    // Suboptimal: Default 5 may be more than needed
+    const result = await trigger("tool::web_search", {
+      query: "AgentOS"
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Use web_fetch for structured data">
+    For APIs returning JSON, `web_fetch` is more efficient than search:
+    
+    ```typescript
+    // Fetch API directly
+    const { content } = await trigger("tool::web_fetch", {
+      url: "https://api.github.com/repos/iii-hq/agentos"
+    });
+    const repo = JSON.parse(content);
+    ```
+  </Accordion>
+
+  <Accordion title="Handle fetch errors gracefully">
+    Check HTTP status before parsing:
+    
+    ```typescript
+    const result = await trigger("tool::web_fetch", {
+      url: "https://api.example.com/data"
+    });
+    
+    if (result.status !== 200) {
+      throw new Error(`HTTP ${result.status}: ${result.content}`);
+    }
+    
+    const data = JSON.parse(result.content);
+    ```
+  </Accordion>
+
+  <Accordion title="Prefer API providers over DuckDuckGo">
+    For production use, configure Tavily or Brave API keys:
+    
+    ```bash
+    export TAVILY_API_KEY=tvly-...
+    export BRAVE_API_KEY=BSA...
+    ```
+    
+    DuckDuckGo's instant answer API has limited coverage.
+  </Accordion>
+</AccordionGroup>
+
+## Common Patterns
+
+### Search + Fetch Pipeline
+
+```typescript
+// 1. Search for relevant pages
+const searchResult = await trigger("tool::web_search", {
+  query: "iii-engine function registration",
+  maxResults: 3
+});
+
+// 2. Fetch top result
+const topUrl = searchResult.results[0].url;
+const page = await trigger("tool::web_fetch", {
+  url: topUrl,
+  maxSize: 50000
+});
+
+// 3. Process content
+console.log(page.content);
+```
+
+### API Data Extraction
+
+```typescript
+const { content, contentType } = await trigger("tool::web_fetch", {
+  url: "https://api.example.com/v1/status"
+});
+
+if (contentType.includes("application/json")) {
+  const data = JSON.parse(content);
+  console.log("API Status:", data.status);
+} else {
+  console.warn("Unexpected content type:", contentType);
+}
+```
+
+### Screenshot for Visual Testing
+
+```typescript
+// Capture before and after states
+const before = await trigger("tool::browser_screenshot", {
+  url: "https://staging.example.com",
+  viewport: { width: 1920, height: 1080 }
+});
+
+// Make changes...
+
+const after = await trigger("tool::browser_screenshot", {
+  url: "https://staging.example.com",
+  viewport: { width: 1920, height: 1080 }
+});
+
+// Compare screenshots
+const diff = await compareImages(before.screenshot, after.screenshot);
+```
+
+## Error Handling
+
+```typescript
+try {
+  const result = await trigger("tool::web_fetch", {
+    url: "http://192.168.1.1"
+  });
+} catch (err) {
+  console.error(err.message);
+  // "SSRF protection: http://192.168.1.1 resolves to blocked IP 192.168.1.1"
+}
+
+try {
+  const result = await trigger("tool::web_fetch", {
+    url: "https://very-slow-api.com/data"
+  });
+} catch (err) {
+  console.error(err.message);
+  // "The operation was aborted" (timeout after 30s)
+}
+```
+
+## Related Tools
+
+- **[File Operations](/tools/file-operations)** — Save fetched content to files
+- **[Data Processing](/tools/overview#data-processing)** — Parse JSON, HTML, XML responses
+- **[Media Tools](/tools/overview#media)** — Download and analyze images from web

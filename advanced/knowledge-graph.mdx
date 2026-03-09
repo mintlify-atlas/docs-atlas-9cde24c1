@@ -1,0 +1,397 @@
+---
+title: Knowledge Graph
+description: Build and query temporal entity-relation graphs for structured agent knowledge
+---
+
+# Knowledge Graph
+
+AgentOS includes a temporal knowledge graph that allows agents to build, version, and query structured knowledge about entities and their relationships. Unlike flat memory storage, the knowledge graph enables semantic queries, graph traversal, and temporal reasoning.
+
+## Overview
+
+The knowledge graph (implemented in `src/knowledge-graph.ts:1`) provides:
+
+- **Temporal versioning** - Track entity evolution over time
+- **Bidirectional relations** - Automatic inverse relationship creation
+- **Graph traversal** - BFS/DFS with depth and direction control
+- **Diff and timeline** - Compare entity states across time periods
+- **Statistical analysis** - Connected components, degree distribution
+
+## Core Concepts
+
+<CardGroup cols={3}>
+  <Card title="Entities" icon="cube">
+    Nodes in the graph representing things (projects, people, concepts) with typed properties
+  </Card>
+  <Card title="Relations" icon="link">
+    Directed edges between entities with types like "built_on", "authored_by", "depends_on"
+  </Card>
+  <Card title="Temporal Validity" icon="clock">
+    Each entity version has validFrom/validUntil timestamps for time-based queries
+  </Card>
+</CardGroup>
+
+## Adding Entities
+
+<Steps>
+  <Step title="Create an entity with properties">
+    ```typescript
+    import { trigger } from "iii-sdk";
+
+    await trigger("kg::add_temporal", {
+      entity: "agentos",
+      type: "project",
+      properties: {
+        language: "TypeScript",
+        stars: 2500,
+        status: "active"
+      },
+      relations: [
+        { target: "iii-engine", type: "built_on" },
+        { target: "claude", type: "powered_by" }
+      ],
+      agentId: "default"
+    });
+    ```
+
+    This creates version 1 of the entity and automatically adds inverse relations on targets.
+  </Step>
+
+  <Step title="Update an entity (creates new version)">
+    ```typescript
+    // Add a new version with updated properties
+    await trigger("kg::add_temporal", {
+      entity: "agentos",
+      type: "project",
+      properties: {
+        language: "TypeScript",
+        stars: 3000,  // Updated
+        status: "active"
+      },
+      relations: [
+        { target: "iii-engine", type: "built_on" },
+        { target: "claude", type: "powered_by" },
+        { target: "swarms", type: "implements" }  // New relation
+      ],
+      agentId: "default"
+    });
+    ```
+
+    The system automatically increments the version (`src/knowledge-graph.ts:71`).
+  </Step>
+
+  <Step title="Add related entities">
+    ```typescript
+    await trigger("kg::add_temporal", {
+      entity: "iii-engine",
+      type: "framework",
+      properties: {
+        primitives: ["Worker", "Function", "Trigger"],
+        language: "Rust"
+      },
+      relations: [],
+      agentId: "default"
+    });
+    ```
+  </Step>
+</Steps>
+
+## Querying the Graph
+
+### Basic Query with Depth
+
+```typescript
+const results = await trigger("kg::query_temporal", {
+  entity: "agentos",
+  depth: 2  // Traverse 2 levels of relations
+});
+
+console.log(results);
+// [
+//   {
+//     entity: "agentos",
+//     type: "project",
+//     properties: { language: "TypeScript", stars: 3000 },
+//     relations: [...],
+//     version: 2,
+//     validFrom: 1709876543210,
+//     validUntil: null
+//   },
+//   { entity: "iii-engine", ... },
+//   { entity: "claude", ... }
+// ]
+```
+
+### Time-Range Query
+
+Query entities as they existed in a specific time window:
+
+```typescript
+const pastState = await trigger("kg::query_temporal", {
+  entity: "agentos",
+  timeRange: {
+    from: Date.now() - 7 * 24 * 60 * 60 * 1000,  // 7 days ago
+    to: Date.now()
+  },
+  depth: 1
+});
+```
+
+The system filters entities by `validFrom` and `validUntil` (`src/knowledge-graph.ts:162-167`).
+
+### Filtered Relations
+
+Only traverse specific relation types:
+
+```typescript
+const deps = await trigger("kg::query_temporal", {
+  entity: "agentos",
+  relationFilter: ["built_on", "depends_on"],
+  depth: 3
+});
+```
+
+## Graph Traversal
+
+For more control over traversal direction and limits:
+
+```typescript
+const { adjacency, paths, nodeCount } = await trigger("kg::traverse", {
+  startEntity: "agentos",
+  direction: "outgoing",  // "incoming" | "both" | "outgoing"
+  maxDepth: 5,
+  maxNodes: 100
+});
+
+console.log(adjacency);
+// {
+//   "agentos": ["iii-engine", "claude", "swarms"],
+//   "iii-engine": ["rust", "websocket"],
+//   ...
+// }
+
+console.log(paths);
+// {
+//   "agentos": ["agentos"],
+//   "iii-engine": ["agentos", "iii-engine"],
+//   "rust": ["agentos", "iii-engine", "rust"]
+// }
+```
+
+## Temporal Operations
+
+### View Version History
+
+```typescript
+const timeline = await trigger("kg::timeline", {
+  entity: "agentos",
+  agentId: "default"
+});
+
+console.log(timeline);
+// [
+//   { version: 1, properties: { stars: 2500 }, createdAt: 1709876000000 },
+//   { version: 2, properties: { stars: 3000 }, createdAt: 1709876543210 }
+// ]
+```
+
+### Compare States (Diff)
+
+```typescript
+const diff = await trigger("kg::diff", {
+  entity: "agentos",
+  agentId: "default",
+  timestamp1: Date.now() - 24 * 60 * 60 * 1000,  // 24h ago
+  timestamp2: Date.now()
+});
+
+console.log(diff);
+// {
+//   added: [...],      // New entities
+//   removed: [...],    // Deleted entities
+//   modified: [        // Changed entities
+//     {
+//       before: { properties: { stars: 2500 } },
+//       after: { properties: { stars: 3000 } }
+//     }
+//   ]
+// }
+```
+
+## Statistics
+
+Get graph-level metrics:
+
+```typescript
+const stats = await trigger("kg::stats", {
+  agentId: "default"
+});
+
+console.log(stats);
+// {
+//   totalEntities: 47,
+//   totalRelations: 128,
+//   avgDegree: 2.72,
+//   connectedComponents: 3  // Number of disconnected subgraphs
+// }
+```
+
+From `src/knowledge-graph.ts:347-361`, this uses DFS to count connected components.
+
+## Real-World Example: Project Knowledge
+
+```typescript
+// Build a knowledge graph of your codebase
+async function buildCodebaseGraph(agentId: string) {
+  // Add the main project
+  await trigger("kg::add_temporal", {
+    entity: "agentos",
+    type: "project",
+    properties: {
+      language: "TypeScript",
+      loc: 32000,
+      tests: 2506
+    },
+    relations: [
+      { target: "iii-engine", type: "depends_on" },
+      { target: "anthropic", type: "integrates_with" }
+    ],
+    agentId
+  });
+
+  // Add subsystems
+  await trigger("kg::add_temporal", {
+    entity: "swarm-system",
+    type: "module",
+    properties: {
+      file: "src/swarm.ts",
+      functions: 5,
+      maxAgents: 20
+    },
+    relations: [
+      { target: "agentos", type: "part_of" },
+      { target: "consensus", type: "implements" }
+    ],
+    agentId
+  });
+
+  // Add concepts
+  await trigger("kg::add_temporal", {
+    entity: "consensus",
+    type: "concept",
+    properties: {
+      threshold: 0.66,
+      algorithm: "voting"
+    },
+    relations: [],
+    agentId
+  });
+
+  // Query the full graph
+  const graph = await trigger("kg::query_temporal", {
+    entity: "agentos",
+    depth: 3
+  });
+
+  // Get project stats
+  const stats = await trigger("kg::stats", { agentId });
+  console.log(`Knowledge graph: ${stats.totalEntities} entities, ${stats.totalRelations} relations`);
+}
+```
+
+## Automatic Inverse Relations
+
+When you create a relation, the system automatically adds the inverse (`src/knowledge-graph.ts:97-127`):
+
+```typescript
+await trigger("kg::add_temporal", {
+  entity: "agentos",
+  relations: [
+    { target: "iii-engine", type: "built_on" }
+  ],
+  // ...
+});
+
+// Automatically creates on iii-engine:
+// { target: "agentos", type: "inverse:built_on" }
+```
+
+This enables bidirectional graph traversal.
+
+## Query Limits
+
+From the implementation:
+
+- **Max depth**: 10 levels (see `src/knowledge-graph.ts:144`)
+- **Max results**: 500 entities per query (see `src/knowledge-graph.ts:154`)
+- **Max nodes in traverse**: 500 (see `src/knowledge-graph.ts:215`)
+
+## HTTP API Endpoints
+
+```bash
+# Add entity
+curl -X POST http://localhost:3111/api/kg/add \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity": "agentos",
+    "type": "project",
+    "properties": { "stars": 3000 },
+    "relations": [],
+    "agentId": "default"
+  }'
+
+# Query graph
+curl -X POST http://localhost:3111/api/kg/query \
+  -d '{ "entity": "agentos", "depth": 2 }'
+
+# Traverse
+curl -X POST http://localhost:3111/api/kg/traverse \
+  -d '{ "startEntity": "agentos", "direction": "both", "maxDepth": 3 }'
+
+# View timeline
+curl -X POST http://localhost:3111/api/kg/timeline \
+  -d '{ "entity": "agentos", "agentId": "default" }'
+
+# Diff states
+curl -X POST http://localhost:3111/api/kg/diff \
+  -d '{
+    "entity": "agentos",
+    "agentId": "default",
+    "timestamp1": 1709876000000,
+    "timestamp2": 1709962400000
+  }'
+
+# Get stats
+curl -X POST http://localhost:3111/api/kg/stats \
+  -d '{ "agentId": "default" }'
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use semantic relation types">
+    Choose meaningful, consistent relation names: `built_on`, `authored_by`, `depends_on`, `implements`, `part_of`.
+  </Accordion>
+
+  <Accordion title="Scope by agentId">
+    Each agent maintains its own knowledge graph. Use consistent agentIds to separate different domains.
+  </Accordion>
+
+  <Accordion title="Set appropriate depth limits">
+    Deep traversals (>5) can be expensive. Start shallow and increase as needed.
+  </Accordion>
+
+  <Accordion title="Use temporal queries for debugging">
+    Compare past and present states to understand how knowledge evolved.
+  </Accordion>
+
+  <Accordion title="Combine with memory">
+    Store unstructured notes in memory, structured facts in the knowledge graph.
+  </Accordion>
+</AccordionGroup>
+
+## Related Features
+
+- [Swarms](/advanced/swarms) - Use KG to structure findings from swarm research
+- [Session Replay](/advanced/session-replay) - Track knowledge graph modifications over time
+- [Memory](/core-concepts/memory) - Complement structured KG with unstructured memory

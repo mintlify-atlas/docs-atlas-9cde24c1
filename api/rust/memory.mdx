@@ -1,0 +1,578 @@
+---
+title: "memory"
+description: "Memory storage, recall, and knowledge graph functions for AgentOS"
+---
+
+The `memory` crate provides persistent memory storage with semantic search, deduplication, knowledge graphs, session management, and automatic eviction policies.
+
+## memory::store
+
+Store a memory entry with SHA-256 content deduplication and optional embedding generation.
+
+<ParamField path="agentId" type="string" required>
+  Agent identifier for memory ownership
+</ParamField>
+
+<ParamField path="content" type="string" required>
+  Memory content to store
+</ParamField>
+
+<ParamField path="role" type="string" required>
+  Message role: "user", "assistant", or "system"
+</ParamField>
+
+<ParamField path="sessionId" type="string">
+  Optional session identifier for grouping related memories
+</ParamField>
+
+<ResponseField name="id" type="string">
+  UUID of the created memory entry
+</ResponseField>
+
+<ResponseField name="stored" type="boolean">
+  True if memory was stored (false if deduplicated)
+</ResponseField>
+
+<ResponseField name="deduplicated" type="boolean">
+  True if content already exists (duplicate detected via SHA-256)
+</ResponseField>
+
+<CodeGroup>
+
+```rust Store Memory
+use iii_sdk::iii::III;
+use serde_json::json;
+
+let iii = III::new("ws://localhost:49134");
+
+let result = iii.trigger("memory::store", json!({
+    "agentId": "agent-123",
+    "content": "User asked about pricing plans",
+    "role": "user",
+    "sessionId": "session-456"
+})).await?;
+
+if result["deduplicated"].as_bool().unwrap_or(false) {
+    println!("Memory already exists (deduplicated)");
+} else {
+    println!("Stored with ID: {}", result["id"].as_str().unwrap());
+}
+```
+
+```typescript TypeScript SDK
+const result = await iii.trigger('memory::store', {
+  agentId: 'agent-123',
+  content: 'User asked about pricing plans',
+  role: 'user',
+  sessionId: 'session-456'
+});
+
+if (result.deduplicated) {
+  console.log('Memory already exists (deduplicated)');
+} else {
+  console.log('Stored with ID:', result.id);
+}
+```
+
+</CodeGroup>
+
+### Storage Details
+
+- **Deduplication**: SHA-256 hash of content prevents duplicates
+- **Embeddings**: Automatically generated via `embedding::generate` if available
+- **Importance**: Auto-calculated based on content length, role, and keywords
+- **Confidence**: Starts at 1.0, decays over time if unaccessed
+- **Session Tracking**: Updates session metadata if sessionId provided
+
+### Memory Entry Structure
+
+```rust
+struct MemoryEntry {
+    id: String,              // UUID v4
+    agent_id: String,
+    content: String,
+    role: String,           // "user" | "assistant" | "system"
+    embedding: Option<Vec<f64>>,  // Vector embedding
+    timestamp: u64,         // Unix timestamp (ms)
+    session_id: Option<String>,
+    importance: f64,        // 0.0-1.0 (auto-calculated)
+    hash: String,           // SHA-256 hex
+    confidence: f64,        // 0.0-1.0 (decays if unaccessed)
+    access_count: u64,
+    last_accessed: u64,     // Unix timestamp (ms)
+}
+```
+
+---
+
+## memory::recall
+
+Hybrid semantic + keyword + recency search across agent memories.
+
+<ParamField path="agentId" type="string" required>
+  Agent ID to search memories for
+</ParamField>
+
+<ParamField path="query" type="string" required>
+  Search query text
+</ParamField>
+
+<ParamField path="limit" type="number" default={10}>
+  Maximum number of results to return
+</ParamField>
+
+<ResponseField name="memories" type="array">
+  Array of memory objects sorted by relevance score (highest first)
+  
+  <ResponseField name="id" type="string">
+    Memory entry UUID
+  </ResponseField>
+  
+  <ResponseField name="role" type="string">
+    Message role
+  </ResponseField>
+  
+  <ResponseField name="content" type="string">
+    Memory content
+  </ResponseField>
+  
+  <ResponseField name="score" type="number">
+    Relevance score (higher is better)
+  </ResponseField>
+  
+  <ResponseField name="timestamp" type="number">
+    Creation timestamp (ms)
+  </ResponseField>
+</ResponseField>
+
+<CodeGroup>
+
+```rust Recall Memories
+let results = iii.trigger("memory::recall", json!({
+    "agentId": "agent-123",
+    "query": "What did the user ask about pricing?",
+    "limit": 5
+})).await?;
+
+for memory in results.as_array().unwrap() {
+    println!("[{:.2}] {} ({})",
+        memory["score"].as_f64().unwrap(),
+        memory["content"].as_str().unwrap(),
+        memory["role"].as_str().unwrap()
+    );
+}
+```
+
+```typescript Recall Memories
+const results = await iii.trigger('memory::recall', {
+  agentId: 'agent-123',
+  query: 'What did the user ask about pricing?',
+  limit: 5
+});
+
+for (const memory of results) {
+  console.log(`[${memory.score.toFixed(2)}] ${memory.content} (${memory.role})`);
+}
+```
+
+</CodeGroup>
+
+### Scoring Algorithm
+
+The recall function uses a weighted hybrid scoring system:
+
+1. **Semantic Similarity (50%)**: Cosine similarity between query and memory embeddings
+2. **Keyword Match (25%)**: Proportion of query keywords found in content (case-insensitive)
+3. **Recency (10%)**: Exponential decay with 1-week half-life
+4. **Importance (10%)**: Stored importance score
+5. **Confidence (5%)**: Current confidence value
+
+### Side Effects
+
+- Increments `accessCount` for returned memories
+- Updates `lastAccessed` timestamp
+- Prevents confidence decay for recently accessed memories
+
+---
+
+## memory::evict
+
+Evict stale, low-importance, or low-confidence memories across all agents.
+
+<ParamField path="maxAge" type="number" default={2592000000}>
+  Maximum age in milliseconds (default: 30 days)
+</ParamField>
+
+<ParamField path="minImportance" type="number" default={0.2}>
+  Minimum importance threshold (0.0-1.0)
+</ParamField>
+
+<ParamField path="cap" type="number" default={10000}>
+  Maximum memories per agent (evicts lowest importance if exceeded)
+</ParamField>
+
+<ResponseField name="evicted" type="number">
+  Total number of memories evicted
+</ResponseField>
+
+```rust Evict Stale Memories
+let result = iii.trigger("memory::evict", json!({
+    "maxAge": 15 * 86_400_000,  // 15 days
+    "minImportance": 0.3,
+    "cap": 5000
+})).await?;
+
+println!("Evicted {} memories", result["evicted"].as_u64().unwrap());
+```
+
+### Eviction Criteria
+
+A memory is evicted if:
+- **(age > maxAge AND importance < minImportance)** OR
+- **confidence < 0.1** OR
+- **Memory count exceeds cap** (evicts lowest importance)
+
+<Note>
+This function is automatically triggered daily at 3 AM via cron expression `0 3 * * *`.
+</Note>
+
+---
+
+## memory::consolidate
+
+Decay confidence on unaccessed memories (runs every 6 hours via cron).
+
+<ParamField path="decayRate" type="number" default={0.05}>
+  Confidence decay rate (0.0-1.0)
+</ParamField>
+
+<ResponseField name="memoriesDecayed" type="number">
+  Number of memories with decayed confidence
+</ResponseField>
+
+<ResponseField name="memoriesMerged" type="number">
+  Number of duplicate memories merged (future feature, currently 0)
+</ResponseField>
+
+<ResponseField name="durationMs" type="number">
+  Execution time in milliseconds
+</ResponseField>
+
+```rust Consolidate Memories
+let result = iii.trigger("memory::consolidate", json!({
+    "decayRate": 0.05
+})).await?;
+
+println!("Decayed {} memories in {}ms",
+    result["memoriesDecayed"].as_u64().unwrap(),
+    result["durationMs"].as_u64().unwrap()
+);
+```
+
+### Consolidation Logic
+
+- Applies to memories not accessed in 7+ days
+- New confidence = `confidence * (1 - decayRate)`, minimum 0.1
+- Skips memories already at minimum confidence (0.1)
+
+<Note>
+Automatic consolidation runs every 6 hours via cron expression `0 */6 * * *`.
+</Note>
+
+---
+
+## memory::kg::add
+
+Add or update knowledge graph entity with bidirectional relation tracking.
+
+<ParamField path="agentId" type="string" required>
+  Agent ID for knowledge graph ownership
+</ParamField>
+
+<ParamField path="entity" type="object" required>
+  Entity object to store
+  
+  <ParamField path="id" type="string" required>
+    Unique entity identifier
+  </ParamField>
+  
+  <ParamField path="type" type="string">
+    Entity type (e.g., "person", "project", "concept")
+  </ParamField>
+  
+  <ParamField path="properties" type="object">
+    Entity attributes as key-value pairs
+  </ParamField>
+  
+  <ParamField path="relations" type="array">
+    Array of relation objects
+    
+    <ParamField path="target" type="string">
+      Target entity ID
+    </ParamField>
+    
+    <ParamField path="type" type="string">
+      Relation type (e.g., "works_on", "reports_to")
+    </ParamField>
+  </ParamField>
+</ParamField>
+
+<ResponseField name="stored" type="boolean">
+  True if entity was stored successfully
+</ResponseField>
+
+<ResponseField name="id" type="string">
+  Entity ID
+</ResponseField>
+
+<CodeGroup>
+
+```rust Add Knowledge Graph Entity
+let result = iii.trigger("memory::kg::add", json!({
+    "agentId": "agent-789",
+    "entity": {
+        "id": "person:alice",
+        "type": "person",
+        "properties": {
+            "name": "Alice Johnson",
+            "role": "Senior Engineer",
+            "department": "Platform"
+        },
+        "relations": [
+            { "target": "project:agentos", "type": "works_on" },
+            { "target": "person:bob", "type": "reports_to" }
+        ]
+    }
+})).await?;
+
+println!("Stored entity: {}", result["id"].as_str().unwrap());
+```
+
+```typescript Add KG Entity
+const result = await iii.trigger('memory::kg::add', {
+  agentId: 'agent-789',
+  entity: {
+    id: 'person:alice',
+    type: 'person',
+    properties: {
+      name: 'Alice Johnson',
+      role: 'Senior Engineer',
+      department: 'Platform'
+    },
+    relations: [
+      { target: 'project:agentos', type: 'works_on' },
+      { target: 'person:bob', type: 'reports_to' }
+    ]
+  }
+});
+```
+
+</CodeGroup>
+
+### Bidirectional Relations
+
+When adding relations, the function automatically creates inverse relations:
+- If A → B with type "works_on", creates B → A with type "inverse:works_on"
+- Prevents duplicate inverse relations
+- Maintains graph consistency across updates
+
+---
+
+## memory::kg::query
+
+Traverse knowledge graph from a starting entity up to specified depth.
+
+<ParamField path="agentId" type="string" required>
+  Agent ID for knowledge graph
+</ParamField>
+
+<ParamField path="entityId" type="string" required>
+  Starting entity ID for traversal
+</ParamField>
+
+<ParamField path="depth" type="number" default={2}>
+  Maximum traversal depth (default: 2)
+</ParamField>
+
+<ResponseField name="entities" type="array">
+  Array of entity objects encountered during traversal
+</ResponseField>
+
+```rust Query Knowledge Graph
+let results = iii.trigger("memory::kg::query", json!({
+    "agentId": "agent-789",
+    "entityId": "person:alice",
+    "depth": 3
+})).await?;
+
+for entity in results.as_array().unwrap() {
+    println!("Entity: {} ({})",
+        entity["id"].as_str().unwrap(),
+        entity["type"].as_str().unwrap_or("unknown")
+    );
+}
+```
+
+### Traversal Algorithm
+
+- Breadth-first search from starting entity
+- Tracks visited nodes to prevent cycles
+- Stops at specified depth or when all paths exhausted
+- Returns entities in order discovered
+
+---
+
+## memory::session::list
+
+List all sessions for a specific agent.
+
+<ParamField path="agentId" type="string" required>
+  Agent ID to list sessions for
+</ParamField>
+
+<ResponseField name="sessions" type="array">
+  Array of session metadata objects
+</ResponseField>
+
+```rust List Sessions
+let sessions = iii.trigger("memory::session::list", json!({
+    "agentId": "agent-123"
+})).await?;
+
+for session in sessions.as_array().unwrap() {
+    println!("Session: {}", session["id"].as_str().unwrap());
+}
+```
+
+---
+
+## memory::session::compact
+
+Compact long sessions by summarizing old messages via LLM.
+
+<ParamField path="agentId" type="string" required>
+  Agent ID
+</ParamField>
+
+<ParamField path="sessionId" type="string" required>
+  Session ID to compact
+</ParamField>
+
+<ParamField path="threshold" type="number" default={30}>
+  Minimum messages before compaction
+</ParamField>
+
+<ParamField path="keepRecent" type="number" default={10}>
+  Number of recent messages to preserve
+</ParamField>
+
+<ResponseField name="compacted" type="boolean">
+  True if compaction was performed
+</ResponseField>
+
+<ResponseField name="summarized" type="number">
+  Number of messages summarized
+</ResponseField>
+
+<ResponseField name="kept" type="number">
+  Number of recent messages kept
+</ResponseField>
+
+<ResponseField name="summaryId" type="string">
+  Memory ID of the generated summary
+</ResponseField>
+
+```rust Compact Session
+let result = iii.trigger("memory::session::compact", json!({
+    "agentId": "agent-123",
+    "sessionId": "session-456",
+    "threshold": 50,
+    "keepRecent": 15
+})).await?;
+
+if result["compacted"].as_bool().unwrap() {
+    println!("Compacted {} messages into summary {}",
+        result["summarized"].as_u64().unwrap(),
+        result["summaryId"].as_str().unwrap()
+    );
+}
+```
+
+### Compaction Process
+
+1. Check if session has ≥ threshold messages
+2. Split into: messages to summarize and recent messages to keep
+3. Fetch full message content from memory
+4. Chunk conversation text (max 80K chars per chunk)
+5. Generate summaries via `llm::complete` with claude-haiku
+6. Store combined summary as system message with importance 0.9
+7. Update session with summary + recent messages
+
+---
+
+## memory::session::repair
+
+7-phase validation and repair for corrupted session data.
+
+<ParamField path="agentId" type="string" required>
+  Agent ID
+</ParamField>
+
+<ParamField path="sessionId" type="string" required>
+  Session ID to repair
+</ParamField>
+
+<ResponseField name="repaired" type="boolean">
+  True if any repairs were performed
+</ResponseField>
+
+<ResponseField name="totalFixes" type="number">
+  Total number of fixes applied
+</ResponseField>
+
+<ResponseField name="stats" type="object">
+  Breakdown of repair statistics by type
+</ResponseField>
+
+```rust Repair Session
+let result = iii.trigger("memory::session::repair", json!({
+    "agentId": "agent-123",
+    "sessionId": "session-corrupted"
+})).await?;
+
+if result["repaired"].as_bool().unwrap() {
+    println!("Applied {} fixes:", result["totalFixes"].as_u64().unwrap());
+    let stats = &result["stats"];
+    println!("  - Empty removed: {}", stats["emptyRemoved"].as_u64().unwrap());
+    println!("  - Duplicates removed: {}", stats["duplicatesRemoved"].as_u64().unwrap());
+    println!("  - Consecutive merged: {}", stats["consecutiveMerged"].as_u64().unwrap());
+    println!("  - Orphaned refs: {}", stats["orphanedRefs"].as_u64().unwrap());
+    println!("  - Reordered: {}", stats["reordered"].as_u64().unwrap());
+    println!("  - Oversized detected: {}", stats["oversizedDetected"].as_u64().unwrap());
+}
+```
+
+### 7 Repair Phases
+
+1. **Remove Empty Messages**: Filter messages with missing or empty IDs
+2. **Deduplicate**: Remove duplicate message IDs
+3. **Merge Consecutive**: Merge consecutive messages with same role (except system)
+4. **Detect Orphans**: Count message references without corresponding memory entries
+5. **Fix Ordering**: Repair out-of-order timestamps
+6. **Detect Oversized**: Flag messages with content > 500KB
+7. **Update Session**: Write repaired session with stats
+
+<Note>
+Repair is idempotent - running multiple times produces the same result.
+</Note>
+
+---
+
+## Cron Automation
+
+The memory worker automatically runs maintenance tasks:
+
+- **Consolidation**: Every 6 hours (`0 */6 * * *`)
+- **Eviction**: Daily at 3 AM (`0 3 * * *`)
+
+These can be manually triggered or configured via environment variables.

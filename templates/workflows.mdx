@@ -1,0 +1,683 @@
+---
+title: Workflows
+description: Multi-step orchestration patterns that coordinate multiple agents and tools to complete complex tasks
+---
+
+Workflows are **multi-step execution graphs** that coordinate agents, tools, and external functions to complete complex tasks. Each workflow defines steps with different execution modes, error handling, and control flow.
+
+## Quick Start
+
+```bash
+# Create a workflow
+agentos workflow create my-workflow.yaml
+
+# List workflows
+agentos workflow list
+
+# Execute a workflow
+agentos workflow run feature-build --input '{"feature_description": "Add user authentication"}'
+
+# View workflow status
+agentos workflow status <run-id>
+```
+
+## Workflow Structure
+
+A workflow is defined in YAML with metadata, agent requirements, and steps:
+
+```yaml
+id: feature-build
+name: Feature Build
+description: Standard feature development workflow with spec, implementation, and review
+
+agents:
+  - architect
+  - coder
+  - code-reviewer
+
+steps:
+  - name: Spec
+    functionId: "agent::chat"
+    promptTemplate: "Design the feature: {{feature_description}}"
+    mode: sequential
+    timeoutMs: 120000
+    errorMode: fail
+    outputVar: tech_spec
+
+  - name: Implement
+    functionId: "agent::chat"
+    promptTemplate: "Implement based on: {{tech_spec}}"
+    mode: sequential
+    timeoutMs: 300000
+    errorMode: retry
+    maxRetries: 2
+    outputVar: implementation
+
+  - name: Review
+    functionId: "agent::chat"
+    promptTemplate: "Review: {{implementation}}. Respond with LGTM if approved."
+    mode: loop
+    timeoutMs: 180000
+    maxIterations: 3
+    until: "LGTM"
+    outputVar: review_result
+```
+
+## Step Modes
+
+Workflows support **5 step execution modes** for different control flow patterns:
+
+<CardGroup cols={2}>
+  <Card title="Sequential" icon="arrow-right">
+    **Linear execution** — step runs once, workflow proceeds to next step.
+    
+    ```yaml
+    mode: sequential
+    ```
+    
+    Use for: Single-execution tasks, API calls, data transforms
+  </Card>
+
+  <Card title="Fanout" icon="diagram-project">
+    **Parallel execution** — step runs concurrently across multiple inputs.
+    
+    ```yaml
+    mode: fanout
+    ```
+    
+    Use for: Batch processing, parallel API calls, map operations
+  </Card>
+
+  <Card title="Collect" icon="code-merge">
+    **Aggregation** — gathers results from previous fanout step.
+    
+    ```yaml
+    mode: collect
+    ```
+    
+    Use for: Reduce operations, result merging, consensus
+  </Card>
+
+  <Card title="Conditional" icon="code-branch">
+    **Branching** — executes only if condition evaluates to true.
+    
+    ```yaml
+    mode: conditional
+    condition: "{{previous_step.status}} == 'success'"
+    ```
+    
+    Use for: Error handling, feature flags, A/B testing
+  </Card>
+
+  <Card title="Loop" icon="rotate-right">
+    **Iterative execution** — repeats until condition is met or max iterations reached.
+    
+    ```yaml
+    mode: loop
+    maxIterations: 5
+    until: "LGTM"
+    ```
+    
+    Use for: Iterative refinement, retry logic, convergence
+  </Card>
+</CardGroup>
+
+## Error Handling
+
+Three error modes control workflow resilience:
+
+<CodeGroup>
+```yaml Fail Fast
+steps:
+  - name: Critical Step
+    functionId: "security::check"
+    errorMode: fail  # Stop workflow on any error
+    timeoutMs: 30000
+```
+
+```yaml Skip on Error
+steps:
+  - name: Optional Notification
+    functionId: "channel::send"
+    errorMode: skip  # Continue workflow even if this fails
+    timeoutMs: 10000
+```
+
+```yaml Retry with Backoff
+steps:
+  - name: External API Call
+    functionId: "tool::http_request"
+    errorMode: retry
+    maxRetries: 3
+    timeoutMs: 60000
+```
+</CodeGroup>
+
+## Example Workflows
+
+AgentOS includes **3 production-ready workflow templates**:
+
+### Feature Build Workflow
+
+Standard feature development with architect, coder, and iterative code review:
+
+<CodeGroup>
+```yaml feature-build.yaml
+id: feature-build
+name: Feature Build
+description: >
+  Standard feature development workflow with spec, implementation,
+  iterative code review, and merge. Uses architect, coder, and reviewer.
+
+agents:
+  - architect
+  - coder
+  - code-reviewer
+
+steps:
+  - name: Spec
+    functionId: "agent::chat"
+    promptTemplate: >
+      Design the feature: {{feature_description}}.
+      Produce a technical spec with API contracts, data models,
+      edge cases, and a dependency list.
+    mode: sequential
+    timeoutMs: 120000
+    errorMode: fail
+    outputVar: tech_spec
+
+  - name: Implement
+    functionId: "agent::chat"
+    promptTemplate: >
+      Implement the feature based on this spec: {{tech_spec}}.
+      Follow existing codebase patterns. Include unit tests.
+      Output the list of changed files.
+    mode: sequential
+    timeoutMs: 300000
+    errorMode: retry
+    maxRetries: 2
+    outputVar: implementation
+
+  - name: Review
+    functionId: "agent::chat"
+    promptTemplate: >
+      Review this implementation: {{implementation}}.
+      Previous review feedback (if any): {{review_result}}.
+      Check for bugs, security issues, test coverage gaps, and style.
+      If issues found, return specific fix instructions for the next iteration.
+      If approved, your response MUST include the word "LGTM".
+    mode: loop
+    timeoutMs: 180000
+    errorMode: retry
+    maxRetries: 2
+    maxIterations: 3
+    until: "LGTM"
+    outputVar: review_result
+
+  - name: Merge
+    functionId: "agent::chat"
+    promptTemplate: >
+      Final approval for merge. Review result: {{review_result}}.
+      Create a changelog entry and confirm merge readiness.
+    mode: sequential
+    timeoutMs: 60000
+    errorMode: fail
+    outputVar: merge_status
+```
+
+```bash Usage
+agentos workflow run feature-build --input '{
+  "feature_description": "Add WebSocket support for real-time updates"
+}'
+```
+</CodeGroup>
+
+### MVP Sprint Workflow
+
+End-to-end MVP delivery from discovery through deployment:
+
+<CodeGroup>
+```yaml mvp-sprint.yaml
+id: mvp-sprint
+name: MVP Sprint
+description: >
+  End-to-end MVP delivery workflow from market discovery through deployment.
+  Uses 5 specialized agents across research, design, engineering, QA, and DevOps.
+
+agents:
+  - trend-researcher
+  - ux-architect
+  - rapid-prototyper
+  - evidence-collector
+  - devops-lead
+
+steps:
+  - name: Discovery
+    functionId: "agent::chat"
+    promptTemplate: >
+      Research the market for: {{goal}}.
+      Identify target users, competitors, and key differentiators.
+      Produce a one-page brief with validated assumptions.
+    mode: sequential
+    timeoutMs: 120000
+    errorMode: fail
+    outputVar: discovery_brief
+
+  - name: Design
+    functionId: "agent::chat"
+    promptTemplate: >
+      Based on this discovery brief: {{discovery_brief}}.
+      Create UX wireframes, user flows, and a component inventory.
+      Focus on the critical path — minimum screens for core value.
+    mode: sequential
+    timeoutMs: 120000
+    errorMode: fail
+    outputVar: design_spec
+
+  - name: Build
+    functionId: "agent::chat"
+    promptTemplate: >
+      Implement the MVP based on this design spec: {{design_spec}}.
+      Prioritize working software over polish.
+      Write tests for critical paths.
+      When all tests pass, include "all_tests_pass" in your response.
+    mode: loop
+    timeoutMs: 300000
+    errorMode: retry
+    maxRetries: 3
+    maxIterations: 5
+    until: "all_tests_pass"
+    outputVar: build_output
+
+  - name: Test
+    functionId: "agent::chat"
+    promptTemplate: >
+      QA the build output: {{build_output}}.
+      Collect evidence (screenshots, test results) for every acceptance criterion.
+      Flag any P0/P1 issues that block ship.
+    mode: sequential
+    timeoutMs: 180000
+    errorMode: fail
+    outputVar: qa_report
+
+  - name: Ship
+    functionId: "agent::chat"
+    promptTemplate: >
+      Deploy the MVP based on QA report: {{qa_report}}.
+      Set up monitoring, alerting, and rollback procedures.
+      Produce a deployment checklist and go-live confirmation.
+    mode: sequential
+    timeoutMs: 120000
+    errorMode: retry
+    maxRetries: 2
+    outputVar: deployment_status
+```
+
+```bash Usage
+agentos workflow run mvp-sprint --input '{
+  "goal": "AI-powered code review tool for Rust projects"
+}'
+```
+</CodeGroup>
+
+### Incident Response Workflow
+
+Automated incident triage, investigation, and remediation:
+
+<CodeGroup>
+```yaml incident-response.yaml
+id: incident-response
+name: Incident Response
+description: >
+  Automated incident response workflow with triage, investigation,
+  mitigation, and post-mortem generation.
+
+agents:
+  - ops
+  - debugger
+  - security-auditor
+  - doc-writer
+
+steps:
+  - name: Triage
+    functionId: "agent::chat"
+    promptTemplate: >
+      Incident alert: {{incident_description}}.
+      Classify severity (P0/P1/P2/P3) and identify affected services.
+    mode: sequential
+    timeoutMs: 60000
+    errorMode: fail
+    outputVar: triage_result
+
+  - name: Investigate
+    functionId: "agent::chat"
+    promptTemplate: >
+      Investigate the incident: {{triage_result}}.
+      Check logs, metrics, and recent deployments.
+      Identify root cause and impact scope.
+    mode: sequential
+    timeoutMs: 180000
+    errorMode: fail
+    outputVar: investigation
+
+  - name: Mitigate
+    functionId: "agent::chat"
+    promptTemplate: >
+      Based on investigation: {{investigation}}.
+      Apply immediate mitigation (rollback, scale, config change).
+      Confirm service restoration.
+    mode: sequential
+    timeoutMs: 120000
+    errorMode: retry
+    maxRetries: 2
+    outputVar: mitigation_result
+
+  - name: Security Check
+    functionId: "agent::chat"
+    promptTemplate: >
+      Security review of incident: {{investigation}}.
+      Check for breach indicators, data exposure, or attack vectors.
+    mode: conditional
+    condition: "{{triage_result.severity}} == 'P0'"
+    timeoutMs: 120000
+    errorMode: skip
+    outputVar: security_report
+
+  - name: Post-Mortem
+    functionId: "agent::chat"
+    promptTemplate: >
+      Generate post-mortem for: {{incident_description}}.
+      Include timeline, root cause, impact, mitigation steps, and action items.
+    mode: sequential
+    timeoutMs: 120000
+    errorMode: fail
+    outputVar: postmortem
+```
+
+```bash Usage
+agentos workflow run incident-response --input '{
+  "incident_description": "API latency spike to 5s+ starting 14:30 UTC"
+}'
+```
+</CodeGroup>
+
+## Advanced Patterns
+
+### Fanout-Collect Pattern
+
+Process multiple items in parallel, then aggregate results:
+
+```yaml
+steps:
+  - name: Parallel Analysis
+    functionId: "agent::chat"
+    promptTemplate: "Analyze: {{item}}"
+    mode: fanout
+    timeoutMs: 60000
+    errorMode: skip
+    outputVar: analysis_results
+
+  - name: Aggregate
+    functionId: "agent::chat"
+    promptTemplate: "Synthesize these analyses: {{analysis_results}}"
+    mode: collect
+    timeoutMs: 120000
+    errorMode: fail
+    outputVar: synthesis
+```
+
+### Conditional Branching
+
+Execute different paths based on previous step results:
+
+```yaml
+steps:
+  - name: Check Status
+    functionId: "tool::health_check"
+    mode: sequential
+    outputVar: health
+
+  - name: Immediate Fix
+    functionId: "agent::chat"
+    mode: conditional
+    condition: "{{health.status}} == 'critical'"
+    promptTemplate: "Apply emergency fix"
+
+  - name: Schedule Maintenance
+    functionId: "agent::chat"
+    mode: conditional
+    condition: "{{health.status}} == 'degraded'"
+    promptTemplate: "Schedule maintenance window"
+```
+
+### Iterative Refinement Loop
+
+Refine output until quality threshold is met:
+
+```yaml
+steps:
+  - name: Generate and Refine
+    functionId: "agent::chat"
+    promptTemplate: >
+      {{#if iteration > 0}}
+      Previous output: {{output}}
+      Feedback: {{feedback}}
+      Improve the output.
+      {{else}}
+      Create initial output for: {{task}}
+      {{/if}}
+    mode: loop
+    maxIterations: 5
+    until: "quality_score > 0.9"
+    timeoutMs: 120000
+    outputVar: final_output
+```
+
+## Variable Interpolation
+
+Workflows use **Handlebars-style templating** for dynamic prompts:
+
+```yaml
+promptTemplate: >
+  Feature: {{feature_description}}
+  Previous iteration: {{implementation}}
+  Review feedback: {{review_result}}
+  {{#if iteration > 0}}
+  This is iteration {{iteration}} of {{maxIterations}}.
+  {{/if}}
+```
+
+Available variables:
+- `{{input}}` - Workflow input
+- `{{<stepName>}}` - Output from previous step
+- `{{iteration}}` - Current loop iteration (loop mode only)
+- `{{maxIterations}}` - Max iterations (loop mode only)
+
+## Workflow Management
+
+<Accordion title="Create from file">
+  ```bash
+  agentos workflow create my-workflow.yaml
+  agentos workflow create feature-build.yaml --validate
+  ```
+</Accordion>
+
+<Accordion title="List workflows">
+  ```bash
+  agentos workflow list
+  agentos workflow list --format json
+  ```
+</Accordion>
+
+<Accordion title="Execute workflow">
+  ```bash
+  # Run with input
+  agentos workflow run feature-build --input '{"feature_description": "Add auth"}'
+  
+  # Run with input from file
+  agentos workflow run feature-build --input @input.json
+  
+  # Run with specific agent assignments
+  agentos workflow run feature-build \
+    --input '{...}' \
+    --agent architect=my-architect-instance
+  ```
+</Accordion>
+
+<Accordion title="Monitor execution">
+  ```bash
+  # Get run status
+  agentos workflow status <run-id>
+  
+  # Watch progress in real-time
+  agentos workflow watch <run-id>
+  
+  # View step results
+  agentos workflow results <run-id>
+  ```
+</Accordion>
+
+<Accordion title="Cancel running workflow">
+  ```bash
+  agentos workflow cancel <run-id>
+  ```
+</Accordion>
+
+## Programmatic API
+
+Workflows can be created and executed programmatically:
+
+<CodeGroup>
+```typescript TypeScript
+import { trigger } from 'iii-sdk';
+
+// Create workflow
+const workflowId = await trigger('workflow::create', {
+  id: 'custom-workflow',
+  name: 'Custom Workflow',
+  description: 'Programmatically defined workflow',
+  steps: [
+    {
+      name: 'Step1',
+      functionId: 'agent::chat',
+      promptTemplate: 'Process: {{input}}',
+      mode: 'sequential',
+      timeoutMs: 60000,
+      errorMode: 'fail',
+      outputVar: 'result'
+    }
+  ]
+});
+
+// Execute workflow
+const runId = await trigger('workflow::run', {
+  workflowId,
+  input: { task: 'Build feature X' },
+  agentId: 'coder-001'
+});
+
+// Get results
+const results = await trigger('workflow::status', { runId });
+```
+
+```rust Rust
+use iii_sdk::{trigger, json};
+
+// Execute workflow
+let result = trigger(
+    "workflow::run",
+    json!({
+        "workflowId": "feature-build",
+        "input": {
+            "feature_description": "Add WebSocket support"
+        }
+    })
+).await?;
+```
+
+```bash CLI
+# One-liner execution
+agentos workflow run feature-build \
+  --input '{"feature_description": "Add WebSocket support"}' \
+  --wait \
+  --format json > results.json
+```
+</CodeGroup>
+
+## Integration with Hands
+
+Trigger hands as workflow steps:
+
+```yaml
+steps:
+  - name: Background Research
+    functionId: "hand::run"
+    mode: sequential
+    timeoutMs: 300000
+    errorMode: retry
+    maxRetries: 2
+    config:
+      handId: researcher
+      input:
+        topic: "{{workflow_input.topic}}"
+        tags: ["automated"]
+    outputVar: research_output
+```
+
+## Security & Approval
+
+Workflows respect security boundaries:
+
+- **Capability Checks**: All agent functions are checked against RBAC before execution
+- **Approval Gates**: Destructive steps can require human approval
+- **Audit Trail**: Complete workflow execution is logged to Merkle chain
+- **Sandboxing**: Code execution steps run in Docker/WASM sandbox
+
+```yaml
+steps:
+  - name: Deploy to Production
+    functionId: "tool::shell_exec"
+    mode: sequential
+    approval: sync  # Require human approval before execution
+    sandbox: docker
+    timeoutMs: 300000
+```
+
+## Best Practices
+
+<Card title="Idempotency" icon="repeat">
+  Design steps to be idempotent so workflows can be safely retried.
+</Card>
+
+<Card title="Timeouts" icon="clock">
+  Set realistic timeouts for each step. Long-running operations should use higher timeouts.
+</Card>
+
+<Card title="Error Handling" icon="triangle-exclamation">
+  Use `fail` for critical steps, `retry` for network operations, `skip` for optional steps.
+</Card>
+
+<Card title="Variable Naming" icon="tag">
+  Use descriptive `outputVar` names that clearly indicate the step's output.
+</Card>
+
+<Card title="Loop Limits" icon="rotate-right">
+  Always set `maxIterations` on loop steps to prevent infinite execution.
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agent Templates" icon="robot" href="/templates/agents">
+    Browse the 45 agent templates available for workflows
+  </Card>
+  <Card title="Hands" icon="hand" href="/templates/hands">
+    Use autonomous hands in workflow steps
+  </Card>
+  <Card title="Swarms" icon="diagram-project" href="/core-concepts/swarms">
+    Coordinate multiple agents with swarm strategies
+  </Card>
+  <Card title="Security" icon="lock" href="/security/approval-gates">
+    Configure approval gates for sensitive workflow steps
+  </Card>
+</CardGroup>

@@ -1,0 +1,244 @@
+---
+title: Security Overview
+description: Comprehensive security architecture with fail-closed defaults and multi-layered protection
+---
+
+AgentOS implements defense-in-depth security across all layers — from capability enforcement to cryptographic audit trails to sandboxed execution.
+
+## Security Architecture
+
+AgentOS is built on **fail-closed** security principles: when a security service is unavailable, the system denies access rather than allowing potentially unsafe operations.
+
+```
+┌─────────────────────────────────────────────────────┐
+│              Agent Request Layer                    │
+├─────────────────────────────────────────────────────┤
+│  RBAC Capability Check → Quota Enforcement          │
+├─────────────────────────────────────────────────────┤
+│  Prompt Injection Scan → Content Filtering          │
+├─────────────────────────────────────────────────────┤
+│  Rate Limiting → Loop Guard → Circuit Breaker       │
+├─────────────────────────────────────────────────────┤
+│  Tool Execution (Docker/WASM Sandbox)               │
+├─────────────────────────────────────────────────────┤
+│  Merkle Audit Chain → Ed25519 Signing               │
+└─────────────────────────────────────────────────────┘
+```
+
+## Security Features
+
+<CardGroup cols={2}>
+  <Card title="RBAC" icon="shield-check" href="/security/rbac">
+    Per-agent capability enforcement with tool-level granularity
+  </Card>
+  <Card title="Audit Chain" icon="link" href="/security/audit-chain">
+    Merkle-linked SHA-256 audit log with tamper detection
+  </Card>
+  <Card title="Sandboxing" icon="box" href="/security/sandboxing">
+    Docker and WASM isolation with fuel limits
+  </Card>
+  <Card title="Vault" icon="lock" href="/security/vault">
+    AES-256-GCM encrypted secrets with auto-lock
+  </Card>
+</CardGroup>
+
+## Fail-Closed Defaults
+
+All security gates deny by default when services are unavailable:
+
+```typescript
+const caps = await trigger("state::get", {
+  scope: "capabilities",
+  key: agentId,
+}).catch(() => null);
+
+if (!caps) {
+  // Fail closed: deny if capabilities cannot be retrieved
+  throw new Error(`Agent ${agentId} has no capabilities defined`);
+}
+```
+
+<Note>
+Security services failing to respond results in request denial, preventing unauthorized access during outages.
+</Note>
+
+## Multi-Layer Protection
+
+### 1. Authentication
+
+- **Mutual Authentication Protocol (MAP)**: HMAC-SHA256 challenge-response between agents
+- **Timing-Safe Comparison**: Constant-time verification prevents timing attacks
+- **Nonce Replay Protection**: Single-use nonces with 60-second validity window
+
+### 2. Authorization
+
+- **RBAC**: Tool-level capability enforcement per agent
+- **Tool Policy**: Allow/deny/approve policies per tool
+- **Approval Tiers**: Auto (read-only), Async (write), Sync (destructive)
+
+### 3. Input Validation
+
+- **Prompt Injection Scanning**: 9 regex patterns detect common attacks
+- **SQL Injection Prevention**: Identifier validation on dynamic queries
+- **Path Traversal Prevention**: Safe path resolution in file operations
+
+### 4. Execution Isolation
+
+- **Docker Sandbox**: Container-isolated code execution
+- **WASM Sandbox**: wasmtime-based execution with fuel limits
+- **Process Timeout**: Hard timeouts prevent runaway processes
+
+### 5. Data Protection
+
+- **Vault Encryption**: AES-256-GCM for secrets at rest
+- **Auto-Zeroing**: Decrypted secrets cleared from memory after TTL
+- **Taint Tracking**: Information flow control (Secret, PII, UntrustedAgent)
+
+### 6. Audit & Compliance
+
+- **Merkle Audit Chain**: SHA-256-linked immutable log
+- **Ed25519 Signing**: Cryptographic signatures for manifests
+- **Tamper Detection**: Chain integrity verification
+
+## Security Configuration
+
+```yaml
+# config.yaml
+security:
+  rbac:
+    enabled: true
+    default_deny: true
+  
+  audit:
+    enabled: true
+    hmac_key: ${AUDIT_HMAC_KEY}
+  
+  vault:
+    auto_lock_minutes: 30
+    min_password_length: 8
+  
+  sandbox:
+    docker:
+      enabled: true
+      network_mode: none
+    wasm:
+      default_fuel: 1000000
+      default_timeout_secs: 30
+      max_memory_pages: 256
+  
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 60
+  
+  prompt_injection:
+    enabled: true
+    block_threshold: 0.5
+```
+
+## Security Workers
+
+AgentOS security is implemented across Rust and TypeScript workers:
+
+| Worker | Language | Purpose |
+|--------|----------|----------|
+| `security` (Rust) | Rust | RBAC, audit chain, prompt injection, taint tracking |
+| `security` (TS) | TypeScript | Capability enforcement, audit log |
+| `security-map` | TypeScript | Mutual authentication protocol |
+| `vault` | TypeScript | AES-256-GCM encrypted secrets |
+| `wasm-sandbox` | Rust | WASM execution with fuel limits |
+
+## Security Workflow
+
+Every agent action flows through multiple security checkpoints:
+
+<Steps>
+  <Step title="Capability Check">
+    Verify agent has permission to access the requested tool via RBAC.
+  </Step>
+  
+  <Step title="Quota Enforcement">
+    Check token usage against per-agent hourly limits.
+  </Step>
+  
+  <Step title="Input Scanning">
+    Scan input for prompt injection patterns and malicious content.
+  </Step>
+  
+  <Step title="Rate Limiting">
+    Apply GCRA token bucket rate limiting per agent.
+  </Step>
+  
+  <Step title="Sandboxed Execution">
+    Execute code in Docker or WASM sandbox with resource limits.
+  </Step>
+  
+  <Step title="Audit Logging">
+    Append event to Merkle-linked audit chain.
+  </Step>
+</Steps>
+
+## Security Guarantees
+
+<Warning>
+While AgentOS implements multiple layers of security, no system is 100% secure. Always:
+- Rotate credentials regularly
+- Review audit logs for anomalies
+- Apply principle of least privilege
+- Keep dependencies updated
+</Warning>
+
+### What AgentOS Protects Against
+
+✅ **Prompt injection attacks** — Regex-based pattern detection  
+✅ **Unauthorized tool access** — RBAC capability enforcement  
+✅ **Resource exhaustion** — Fuel limits, timeouts, rate limiting  
+✅ **Audit tampering** — Merkle-linked immutable chain  
+✅ **Secrets exposure** — AES-256-GCM encryption + auto-zeroing  
+✅ **Replay attacks** — Single-use nonces with timing verification  
+✅ **Timing attacks** — Constant-time HMAC comparison  
+
+### What You Still Need to Protect
+
+⚠️ **Supply chain attacks** — Review dependencies and lock versions  
+⚠️ **Social engineering** — Train users on security best practices  
+⚠️ **Physical access** — Secure infrastructure and credentials  
+⚠️ **Zero-day exploits** — Keep systems patched and monitored  
+
+## CLI Security Commands
+
+```bash
+# View audit log
+agentos security audit
+
+# Verify audit chain integrity
+agentos security verify
+
+# Scan text for prompt injection
+agentos security scan "user input text"
+
+# Initialize encrypted vault
+agentos vault init
+
+# Store a secret
+agentos vault set API_KEY sk-xxxxx
+
+# List stored secrets (keys only)
+agentos vault list
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="RBAC Configuration" icon="user-shield" href="/security/rbac">
+    Configure per-agent capabilities and tool policies
+  </Card>
+  <Card title="Audit Chain" icon="shield-check" href="/security/audit-chain">
+    Learn how to verify audit integrity and detect tampering
+  </Card>
+  <Card title="Sandboxing" icon="box" href="/security/sandboxing">
+    Configure Docker and WASM sandboxes for code execution
+  </Card>
+  <Card title="Vault Setup" icon="key" href="/security/vault">
+    Securely store API keys and credentials
+  </Card>
+</CardGroup>

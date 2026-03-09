@@ -1,0 +1,270 @@
+---
+title: Multi-Agent Swarms
+description: Coordinate multiple agents to solve complex tasks through decentralized collaboration
+---
+
+# Multi-Agent Swarms
+
+AgentOS swarms enable multiple agents to work together on complex tasks through decentralized coordination. Unlike hierarchical systems, swarms use consensus-based decision making where agents observe, propose, vote, and converge on solutions.
+
+## Overview
+
+Swarms are implemented in `src/swarm.ts:1` and provide four key capabilities:
+
+- **Decentralized coordination** with up to 20 agents per swarm
+- **Consensus-based decisions** using configurable voting thresholds (default: 66%)
+- **Message-based communication** with observations, proposals, and votes
+- **Automatic archival** to agent memory when swarms dissolve
+
+## Creating a Swarm
+
+<Steps>
+  <Step title="Define the goal and select agents">
+    ```typescript
+    import { trigger } from "iii-sdk";
+
+    const swarmId = await trigger("swarm::create", {
+      goal: "Research and write a technical blog post on distributed systems",
+      agentIds: ["researcher", "writer", "editor"],
+      maxDurationMs: 600_000,  // 10 minutes
+      consensusThreshold: 0.66 // 66% agreement required
+    });
+    ```
+  </Step>
+
+  <Step title="Agents broadcast messages to the swarm">
+    Each agent can share observations, make proposals, or cast votes:
+
+    ```typescript
+    // Agent shares an observation
+    await trigger("swarm::broadcast", {
+      swarmId,
+      agentId: "researcher",
+      message: "Found 3 key papers on consensus algorithms",
+      type: "observation"
+    });
+
+    // Agent makes a proposal
+    await trigger("swarm::broadcast", {
+      swarmId,
+      agentId: "writer",
+      message: "Let's structure the post around Raft and Paxos",
+      type: "proposal"
+    });
+
+    // Agent votes on a proposal
+    await trigger("swarm::broadcast", {
+      swarmId,
+      agentId: "editor",
+      message: "Agree with Raft/Paxos focus",
+      type: "vote",
+      vote: "for"
+    });
+    ```
+  </Step>
+
+  <Step title="Check consensus status">
+    ```typescript
+    const consensus = await trigger("swarm::consensus", {
+      swarmId,
+      proposal: "Let's structure the post around Raft and Paxos"
+    });
+
+    console.log(consensus);
+    // {
+    //   hasConsensus: true,
+    //   votesFor: 2,
+    //   votesAgainst: 0,
+    //   threshold: 0.66,
+    //   totalVoters: 3
+    // }
+    ```
+  </Step>
+
+  <Step title="Gather findings and dissolve">
+    ```typescript
+    // Collect all messages
+    const findings = await trigger("swarm::collect", { swarmId });
+    console.log(findings);
+    // {
+    //   totalMessages: 45,
+    //   observations: [...],
+    //   proposals: [...],
+    //   votes: [...],
+    //   agents: { researcher: [...], writer: [...], editor: [...] }
+    // }
+
+    // Dissolve and archive to memory
+    await trigger("swarm::dissolve", { swarmId });
+    ```
+  </Step>
+</Steps>
+
+## Swarm Strategies
+
+While the core swarm implementation focuses on consensus, you can implement different coordination strategies:
+
+<CardGroup cols={2}>
+  <Card title="Parallel" icon="arrows-split-up-and-left">
+    All agents work simultaneously on different aspects of the problem. Best for independent subtasks.
+  </Card>
+  <Card title="Sequential" icon="arrow-right">
+    Agents take turns, each building on the previous agent's work. Best for dependent tasks.
+  </Card>
+  <Card title="Consensus" icon="scale-balanced">
+    Agents vote on proposals until reaching agreement threshold. Built into the swarm system.
+  </Card>
+  <Card title="Hierarchical" icon="sitemap">
+    One agent coordinates others. Combine with the hierarchy system for org-chart-based coordination.
+  </Card>
+</CardGroup>
+
+## Real-World Example: Code Review
+
+```typescript
+const { swarmId } = await trigger("swarm::create", {
+  goal: "Review PR #42 for security, performance, and code quality",
+  agentIds: ["security-auditor", "performance-analyst", "code-reviewer"],
+  consensusThreshold: 1.0 // Require unanimous approval
+});
+
+// Each agent analyzes the PR
+await trigger("swarm::broadcast", {
+  swarmId,
+  agentId: "security-auditor",
+  message: "No SQL injection vulnerabilities found. Input validation looks good.",
+  type: "observation"
+});
+
+await trigger("swarm::broadcast", {
+  swarmId,
+  agentId: "performance-analyst",
+  message: "Added caching layer reduces DB calls by 60%",
+  type: "observation"
+});
+
+// Make approval proposal
+await trigger("swarm::broadcast", {
+  swarmId,
+  agentId: "code-reviewer",
+  message: "Approve PR #42 for merge",
+  type: "proposal"
+});
+
+// All agents vote
+for (const agentId of ["security-auditor", "performance-analyst", "code-reviewer"]) {
+  await trigger("swarm::broadcast", {
+    swarmId,
+    agentId,
+    message: "Approve PR #42 for merge",
+    type: "vote",
+    vote: "for"
+  });
+}
+
+// Check if unanimous
+const result = await trigger("swarm::consensus", {
+  swarmId,
+  proposal: "Approve PR #42 for merge"
+});
+
+if (result.hasConsensus) {
+  console.log("✓ PR approved by all reviewers");
+  await trigger("swarm::dissolve", { swarmId });
+}
+```
+
+## Swarm Limits
+
+From `src/swarm.ts:32`:
+
+- **MAX_AGENTS_PER_SWARM**: 20 agents
+- **MAX_MESSAGES_PER_SWARM**: 500 messages
+- **DEFAULT_MAX_DURATION_MS**: 600,000ms (10 minutes)
+- **DEFAULT_CONSENSUS_THRESHOLD**: 0.66 (66% agreement)
+
+## HTTP API Endpoints
+
+```bash
+# Create a swarm
+curl -X POST http://localhost:3111/api/swarm/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "goal": "Analyze customer feedback from Q1",
+    "agentIds": ["analyst-1", "analyst-2", "analyst-3"]
+  }'
+
+# Broadcast a message
+curl -X POST http://localhost:3111/api/swarm/:id/broadcast \
+  -d '{
+    "agentId": "analyst-1",
+    "message": "Found 3 major themes in the data",
+    "type": "observation"
+  }'
+
+# Check status
+curl http://localhost:3111/api/swarm/:id/status
+
+# Check consensus
+curl -X POST http://localhost:3111/api/swarm/:id/consensus \
+  -d '{ "proposal": "Focus on theme A" }'
+
+# Dissolve swarm
+curl -X POST http://localhost:3111/api/swarm/:id/dissolve
+```
+
+## Security & Auditing
+
+All swarm operations are automatically audited (see `src/swarm.ts:80-83`):
+
+- **swarm_created**: Logged with swarmId, goal, and agent count
+- **swarm_dissolved**: Logged with final message count
+- **Agent membership**: Validated before broadcasting messages
+
+## Memory Integration
+
+When a swarm dissolves (`src/swarm.ts:269-280`), findings are automatically stored in each agent's memory:
+
+```typescript
+for (const agentId of swarm.agentIds) {
+  const agentFindings = findings.agents?.[agentId] || [];
+  if (agentFindings.length > 0) {
+    await trigger("memory::store", {
+      agentId,
+      sessionId: `swarm:${swarmId}`,
+      role: "system",
+      content: `Swarm ${swarmId} findings: ${JSON.stringify(agentFindings.slice(0, 10))}`
+    });
+  }
+}
+```
+
+This allows agents to recall swarm insights in future conversations.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Choose the right consensus threshold">
+    - **1.0 (100%)**: Use for critical decisions (deployments, security approvals)
+    - **0.66 (66%)**: Default, good for most collaborative tasks
+    - **0.5 (50%)**: Majority rule for faster iteration
+  </Accordion>
+
+  <Accordion title="Limit swarm size">
+    Smaller swarms (3-5 agents) converge faster. Use hierarchical coordination for larger teams.
+  </Accordion>
+
+  <Accordion title="Set appropriate timeouts">
+    Match `maxDurationMs` to task complexity. Long-running research might need 30+ minutes.
+  </Accordion>
+
+  <Accordion title="Monitor message volume">
+    Watch for chatty agents approaching the 500-message limit. Consider breaking into multiple swarms.
+  </Accordion>
+</AccordionGroup>
+
+## Related Features
+
+- [Knowledge Graph](/advanced/knowledge-graph) - Structure findings from swarm research
+- [Session Replay](/advanced/session-replay) - Debug swarm coordination issues
+- [A2A Protocol](/advanced/a2a-protocol) - Connect swarms across different AgentOS instances

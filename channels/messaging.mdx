@@ -1,0 +1,471 @@
+---
+title: Messaging Platform Adapters
+description: Connect agents to Telegram, Discord, Slack, WhatsApp, and 11 other messaging platforms
+---
+
+AgentOS supports **15 messaging platforms** with production-ready channel adapters. Each adapter handles platform-specific webhooks, authentication, and bidirectional messaging.
+
+## Telegram
+
+Instant messaging with bot commands and inline responses.
+
+### Setup
+
+<Steps>
+  <Step title="Create Bot">
+    Message [@BotFather](https://t.me/botfather) on Telegram:
+    ```
+    /newbot
+    Your Bot Name
+    your_bot_username
+    ```
+    Copy the bot token.
+  </Step>
+  
+  <Step title="Configure Webhook">
+    Set the webhook URL to your AgentOS instance:
+    ```bash
+    curl -X POST https://api.telegram.org/bot<TOKEN>/setWebhook \
+      -d "url=https://your-domain.com/webhook/telegram" \
+      -d "secret_token=your-secret-token"
+    ```
+  </Step>
+  
+  <Step title="Store Credentials">
+    ```bash
+    agentos vault set TELEGRAM_BOT_TOKEN "your-bot-token"
+    agentos vault set TELEGRAM_SECRET_TOKEN "your-secret-token"
+    ```
+  </Step>
+  
+  <Step title="Enable Channel">
+    ```bash
+    agentos channel enable telegram
+    agentos channel test telegram
+    ```
+  </Step>
+</Steps>
+
+### Features
+
+- Markdown message formatting
+- Automatic message splitting (4,096 char limit)
+- Webhook signature verification
+- Edit message support
+- Chat ID-based agent routing
+
+### Implementation
+
+Source: `src/channels/telegram.ts:1`
+
+```typescript
+registerFunction(
+  { id: "channel::telegram::webhook" },
+  async (req) => {
+    const update = req.body;
+    const message = update.message || update.edited_message;
+    const chatId = message.chat.id;
+    
+    const agentId = await resolveAgent(trigger, "telegram", String(chatId));
+    const response = await trigger("agent::chat", {
+      agentId,
+      message: message.text,
+      sessionId: `telegram:${chatId}`
+    });
+    
+    await sendMessage(chatId, response.content);
+  }
+);
+```
+
+---
+
+## Discord
+
+Community chat and gaming server integration.
+
+### Setup
+
+<Steps>
+  <Step title="Create Application">
+    Go to [Discord Developer Portal](https://discord.com/developers/applications)
+    - Create New Application
+    - Go to Bot tab
+    - Click "Add Bot"
+    - Copy bot token
+  </Step>
+  
+  <Step title="Configure Intents">
+    Enable in Bot settings:
+    - Server Members Intent
+    - Message Content Intent
+  </Step>
+  
+  <Step title="Store Credentials">
+    ```bash
+    agentos vault set DISCORD_BOT_TOKEN "your-bot-token"
+    ```
+  </Step>
+  
+  <Step title="Invite Bot">
+    Generate OAuth2 URL with scopes: `bot`, permissions: `Send Messages`, `Read Messages`
+  </Step>
+</Steps>
+
+### Features
+
+- Channel-based routing
+- Bot mention filtering
+- Message splitting (2,000 char limit)
+- Embed support
+
+Source: `src/channels/discord.ts:1`
+
+---
+
+## Slack
+
+Enterprise team communication.
+
+### Setup
+
+<Steps>
+  <Step title="Create Slack App">
+    Go to [api.slack.com/apps](https://api.slack.com/apps)
+    - Create New App
+    - Choose "From scratch"
+    - Select workspace
+  </Step>
+  
+  <Step title="Configure Bot">
+    In App Settings:
+    - OAuth & Permissions → Add `chat:write` scope
+    - Event Subscriptions → Enable Events
+    - Subscribe to `message.channels`
+    - Set Request URL to `https://your-domain.com/webhook/slack/events`
+  </Step>
+  
+  <Step title="Store Credentials">
+    ```bash
+    agentos vault set SLACK_BOT_TOKEN "xoxb-..."
+    agentos vault set SLACK_SIGNING_SECRET "..."
+    ```
+  </Step>
+</Steps>
+
+### Features
+
+- Thread-aware responses
+- Signature verification with timing-safe comparison
+- URL verification challenge handling
+- Message splitting (4,000 char limit)
+
+Source: `src/channels/slack.ts:1`
+
+---
+
+## WhatsApp
+
+Customer support via WhatsApp Business API.
+
+### Setup
+
+<Steps>
+  <Step title="Get API Access">
+    Register for [WhatsApp Business API](https://developers.facebook.com/docs/whatsapp)
+  </Step>
+  
+  <Step title="Configure Webhook">
+    Set webhook URL in Meta Developer Console:
+    ```
+    https://your-domain.com/webhook/whatsapp
+    ```
+  </Step>
+  
+  <Step title="Store Credentials">
+    ```bash
+    agentos vault set WHATSAPP_TOKEN "your-access-token"
+    agentos vault set WHATSAPP_PHONE_ID "your-phone-number-id"
+    ```
+  </Step>
+</Steps>
+
+### Features
+
+- Business messaging API integration
+- Template message support
+- Message splitting (4,096 char limit)
+- Media message handling
+
+Source: `src/channels/whatsapp.ts:1`
+
+---
+
+## Microsoft Teams
+
+Enterprise collaboration platform.
+
+### Setup
+
+<Steps>
+  <Step title="Register Bot">
+    Go to [Azure Portal](https://portal.azure.com)
+    - Create Azure Bot resource
+    - Note App ID and generate App Password
+  </Step>
+  
+  <Step title="Configure Messaging">
+    Set messaging endpoint:
+    ```
+    https://your-domain.com/webhook/teams
+    ```
+  </Step>
+  
+  <Step title="Store Credentials">
+    ```bash
+    agentos vault set TEAMS_APP_ID "..."
+    agentos vault set TEAMS_APP_PASSWORD "..."
+    ```
+  </Step>
+</Steps>
+
+### Features
+
+- Bot Framework integration
+- OAuth2 token refresh
+- Conversation ID routing
+- Reply threading
+
+Source: `src/channels/teams.ts:1`
+
+---
+
+## Email
+
+SMTP/IMAP email automation.
+
+### Setup
+
+<Steps>
+  <Step title="Configure SMTP">
+    Set environment variables:
+    ```bash
+    export SMTP_HOST="smtp.gmail.com"
+    export SMTP_PORT="587"
+    export SMTP_SECURE="false"
+    export SMTP_USER="your-email@gmail.com"
+    export SMTP_PASS="your-app-password"
+    ```
+  </Step>
+  
+  <Step title="Test Connection">
+    ```bash
+    agentos channel test email
+    ```
+  </Step>
+</Steps>
+
+### Features
+
+- Nodemailer integration
+- Subject line handling
+- Reply thread continuity
+- HTML/plain text support
+
+Source: `src/channels/email.ts:1`
+
+---
+
+## Google Chat
+
+Google Workspace integration.
+
+### Setup
+
+<Steps>
+  <Step title="Create Chat App">
+    Go to [Google Chat API Console](https://console.cloud.google.com/apis/api/chat.googleapis.com)
+    - Enable Google Chat API
+    - Create credentials
+  </Step>
+  
+  <Step title="Store Credentials">
+    ```bash
+    agentos vault set GOOGLE_CHAT_TOKEN "..."
+    ```
+  </Step>
+</Steps>
+
+Source: `src/channels/google-chat.ts:1`
+
+---
+
+## Signal
+
+Encrypted messaging.
+
+### Setup
+
+Requires [signal-cli](https://github.com/AsamK/signal-cli) bridge.
+
+```bash
+agentos vault set SIGNAL_ACCOUNT "+1234567890"
+```
+
+Source: `src/channels/signal.ts:1`
+
+---
+
+## Additional Messaging Platforms
+
+<CardGroup cols={2}>
+  <Card title="IRC" icon="hashtag">
+    Legacy chat networks
+    
+    Source: `src/channels/irc.ts:1`
+  </Card>
+  
+  <Card title="Matrix" icon="matrix-org">
+    Decentralized chat protocol
+    
+    Source: `src/channels/matrix.ts:1`
+  </Card>
+  
+  <Card title="XMPP" icon="comments">
+    Open protocol messaging (Jabber)
+    
+    Source: `src/channels/xmpp.ts:1`
+  </Card>
+  
+  <Card title="Viber" icon="mobile">
+    International messaging
+    
+    Source: `src/channels/viber.ts:1`
+  </Card>
+  
+  <Card title="LINE" icon="line">
+    Asia-Pacific messaging
+    
+    Source: `src/channels/line.ts:1`
+  </Card>
+  
+  <Card title="Messenger" icon="facebook-messenger">
+    Facebook Messenger integration
+    
+    Source: `src/channels/messenger.ts:1`
+  </Card>
+  
+  <Card title="Threema" icon="lock">
+    Privacy-focused Swiss messaging
+    
+    Source: `src/channels/threema.ts:1`
+  </Card>
+  
+  <Card title="Feishu/Lark" icon="building">
+    China enterprise market
+    
+    Source: `src/channels/feishu.ts:1`
+  </Card>
+</CardGroup>
+
+## Multi-Platform Agent
+
+Connect a single agent to multiple messaging platforms:
+
+```bash
+# Configure credentials for each platform
+agentos vault set TELEGRAM_BOT_TOKEN "..."
+agentos vault set DISCORD_BOT_TOKEN "..."
+agentos vault set SLACK_BOT_TOKEN "..."
+
+# Enable channels
+agentos channel enable telegram
+agentos channel enable discord
+agentos channel enable slack
+
+# All channels will route to your default agent
+agentos agent chat default
+```
+
+## Testing
+
+```bash
+# Test individual channel
+agentos channel test telegram
+
+# View webhook logs
+agentos logs --follow | grep "channel::"
+
+# Check audit trail
+agentos security audit | grep "channel_message"
+```
+
+## Message Splitting Logic
+
+All messaging adapters automatically split long responses:
+
+```typescript
+import { splitMessage } from "../shared/utils.js";
+
+const chunks = splitMessage(response.content, platformLimit);
+for (const chunk of chunks) {
+  await sendMessage(recipientId, chunk);
+}
+```
+
+| Platform | Limit | Source |
+|----------|-------|--------|
+| Telegram | 4,096 | `telegram.ts:66` |
+| Slack | 4,000 | `slack.ts:65` |
+| Discord | 2,000 | `discord.ts:50` |
+| WhatsApp | 4,096 | `whatsapp.ts:65` |
+| Teams | 4,096 | `teams.ts:94` |
+
+## Security
+
+### Webhook Signature Verification
+
+**Telegram** (`telegram.ts:19`):
+```typescript
+if (!verifyTelegramUpdate(secretToken, req)) {
+  return { status_code: 401 };
+}
+```
+
+**Slack** (`slack.ts:32`):
+```typescript
+try {
+  verifySlackSignature(req, signingSecret);
+} catch (e) {
+  return { status_code: 401, body: { error: e.message } };
+}
+```
+
+### Audit Events
+
+Every channel message emits an audit event:
+
+```typescript
+triggerVoid("security::audit", {
+  type: "channel_message",
+  agentId,
+  detail: { channel: "telegram", chatId, userId }
+});
+```
+
+View audit trail:
+```bash
+agentos security audit --type channel_message
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Social Media" icon="share-nodes" href="/channels/social">
+    Connect to Bluesky, Reddit, Twitch, LinkedIn
+  </Card>
+  
+  <Card title="Custom Adapters" icon="code" href="/channels/custom">
+    Build your own channel adapter
+  </Card>
+</CardGroup>

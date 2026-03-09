@@ -1,0 +1,248 @@
+---
+title: 'Control Plane Overview'
+description: 'Full agent orchestration layer with 8 Rust crates and 45 functions'
+---
+
+The Control Plane provides enterprise-grade agent orchestration through 8 specialized Rust workers, exposing 45 functions via 44 HTTP endpoints and 2 PubSub triggers.
+
+## Architecture
+
+All 8 crates are built on **iii-engine** using the **iii-sdk**, connecting via WebSocket to register functions and triggers. Every component follows the same pattern:
+
+```rust
+let iii = III::new("ws://localhost:49134");
+iii.register_function_with_description(
+    "crate::function",
+    "Description",
+    move |input: Value| { /* handler */ },
+);
+iii.register_trigger("http", "crate::function", json!({ ... }))?;
+```
+
+## The 8 Crates
+
+| Crate | Purpose | LOC | Functions | Endpoints |
+|-------|---------|-----|-----------|----------|
+| **realm** | Multi-tenant isolation domains | ~280 | 7 | 7 REST |
+| **hierarchy** | Agent org structure (cycle-safe DFS) | ~250 | 5 | 5 REST |
+| **directive** | Hierarchical goal alignment | ~280 | 5 | 5 REST |
+| **mission** | Task lifecycle with state machine | ~350 | 7 | 7 REST |
+| **ledger** | Budget enforcement (soft/hard limits) | ~300 | 4 | 4 REST + 1 PubSub |
+| **council** | Governance with SHA-256 audit chain | ~450 | 6 | 6 REST + 1 PubSub |
+| **pulse** | Scheduled agent invocation | ~250 | 4 | 4 REST |
+| **bridge** | External runtime adapters (6 types) | ~300 | 5 | 5 REST |
+
+**Total:** 8 crates, 45 functions, 44 HTTP endpoints, 2 PubSub triggers
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Multi-Tenant Isolation" icon="building">
+    Realms provide complete isolation with export/import capabilities and secret scrubbing.
+  </Card>
+  <Card title="Organizational Hierarchy" icon="sitemap">
+    Cycle-safe org charts with capability search and chain-of-command resolution.
+  </Card>
+  <Card title="Goal Alignment" icon="crosshairs">
+    Hierarchical directives with ancestry tracing and optimistic concurrency control.
+  </Card>
+  <Card title="Task Management" icon="list-check">
+    State machine-driven missions with atomic checkout and comment threads.
+  </Card>
+  <Card title="Budget Enforcement" icon="wallet">
+    Soft/hard limits with per-agent/model/provider spend tracking and alerts.
+  </Card>
+  <Card title="Governance" icon="gavel">
+    Proposal-based governance with merkle-chained audit trail and agent overrides.
+  </Card>
+  <Card title="Scheduled Invocation" icon="clock">
+    Cron-based agent activation with context-aware ticks and budget gating.
+  </Card>
+  <Card title="Runtime Adapters" icon="plug">
+    Bridge to 6 external runtimes: Process, HTTP, ClaudeCode, Codex, Cursor, OpenCode.
+  </Card>
+</CardGroup>
+
+## Usage Example
+
+```rust
+// Create realm
+trigger("realm::create", json!({
+    "name": "production",
+    "description": "Production environment",
+    "owner": "admin",
+    "defaultModel": "claude-sonnet-4",
+    "maxAgents": 100
+}))
+
+// Build hierarchy
+trigger("hierarchy::set", json!({
+    "realmId": "r-1",
+    "agentId": "agent-ceo",
+    "title": "CEO",
+    "capabilities": ["leadership", "strategy"],
+    "rank": 10
+}))
+
+// Create directive
+trigger("directive::create", json!({
+    "realmId": "r-1",
+    "title": "Ship v2.0",
+    "level": "realm",
+    "priority": "critical"
+}))
+
+// Create mission
+trigger("mission::create", json!({
+    "realmId": "r-1",
+    "title": "Build authentication",
+    "directiveId": "dir-1",
+    "priority": "high",
+    "createdBy": "agent-pm"
+}))
+
+// Set budget
+trigger("ledger::set_budget", json!({
+    "realmId": "r-1",
+    "monthlyCents": 500000,
+    "softThreshold": 0.8,
+    "hardLimit": true
+}))
+
+// Submit proposal
+trigger("council::submit", json!({
+    "realmId": "r-1",
+    "kind": "hire_agent",
+    "title": "Hire research agent",
+    "requestedBy": "agent-lead"
+}))
+
+// Schedule pulse
+trigger("pulse::register", json!({
+    "realmId": "r-1",
+    "agentId": "agent-ops",
+    "cron": "0 */5 * * * *",
+    "contextMode": "full"
+}))
+
+// Register runtime
+trigger("bridge::register", json!({
+    "kind": "process",
+    "name": "Python Agent",
+    "command": "python",
+    "args": ["agent.py"],
+    "timeoutSecs": 300
+}))
+```
+
+## Starting Workers
+
+### Via CLI
+
+```bash
+agentos start  # Starts all workers including control plane
+```
+
+### Manual
+
+```bash
+cargo run --release -p agentos-realm &
+cargo run --release -p agentos-hierarchy &
+cargo run --release -p agentos-directive &
+cargo run --release -p agentos-mission &
+cargo run --release -p agentos-ledger &
+cargo run --release -p agentos-council &
+cargo run --release -p agentos-pulse &
+cargo run --release -p agentos-bridge &
+```
+
+## REST API
+
+All endpoints are exposed via iii-engine's REST API module on port 3111:
+
+```bash
+# Realm endpoints
+POST   /api/realms
+GET    /api/realms
+GET    /api/realms/:id
+PATCH  /api/realms/:id
+DELETE /api/realms/:id
+POST   /api/realms/:id/export
+POST   /api/realms/import
+
+# Hierarchy endpoints
+POST   /api/hierarchy
+GET    /api/hierarchy/:realmId/tree
+GET    /api/hierarchy/:realmId/find
+GET    /api/hierarchy/:realmId/chain/:agentId
+DELETE /api/hierarchy/:realmId/:agentId
+
+# ...and 34 more endpoints
+```
+
+## PubSub Integration
+
+Two functions subscribe to topics for reactive processing:
+
+```rust
+// Ledger listens for cost events
+iii.register_trigger("subscribe", "ledger::spend", 
+    json!({ "topic": "cost.incurred" }))?;
+
+// Council listens for audit events
+iii.register_trigger("subscribe", "council::activity", 
+    json!({ "topic": "council.audit" }))?;
+```
+
+## Design Principles
+
+<Steps>
+  <Step title="Function-Based Architecture">
+    Every capability is a pure function registered on the iii-engine bus. No frameworks, no classes, no inheritance.
+  </Step>
+  
+  <Step title="State via iii-engine">
+    All state is stored using `state::set`, `state::get`, `state::list` functions. No direct database access.
+  </Step>
+  
+  <Step title="Event-Driven Communication">
+    Workers publish lifecycle events to topics. Other workers can subscribe and react.
+  </Step>
+  
+  <Step title="Fail-Safe Defaults">
+    Missing budget? Allow by default. Missing directive? Continue. The system degrades gracefully.
+  </Step>
+  
+  <Step title="Optimistic Concurrency">
+    Versioned CAS (Compare-And-Swap) prevents race conditions on critical updates.
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Realm" icon="building" href="/control-plane/realm">
+    Learn about multi-tenant isolation
+  </Card>
+  <Card title="Hierarchy" icon="sitemap" href="/control-plane/hierarchy">
+    Build organizational structures
+  </Card>
+  <Card title="Directive" icon="crosshairs" href="/control-plane/directive">
+    Align agent goals
+  </Card>
+  <Card title="Mission" icon="list-check" href="/control-plane/mission">
+    Manage tasks and workflows
+  </Card>
+  <Card title="Ledger" icon="wallet" href="/control-plane/ledger">
+    Track and enforce budgets
+  </Card>
+  <Card title="Council" icon="gavel" href="/control-plane/council">
+    Govern your agent fleet
+  </Card>
+  <Card title="Pulse" icon="clock" href="/control-plane/pulse">
+    Schedule agent invocations
+  </Card>
+  <Card title="Bridge" icon="plug" href="/control-plane/bridge">
+    Connect external runtimes
+  </Card>
+</CardGroup>

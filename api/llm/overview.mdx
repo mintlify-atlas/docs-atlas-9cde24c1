@@ -1,0 +1,189 @@
+---
+title: LLM Integration Overview
+description: AgentOS provides unified access to 25 LLM providers and 47 models with intelligent routing
+---
+
+AgentOS provides a comprehensive LLM integration layer that gives you unified access to **25 providers** and **47 models** through a single, consistent API.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="25 LLM Providers" icon="cloud">
+    Connect to major providers like Anthropic, OpenAI, Google, AWS Bedrock, DeepSeek, and 20 more
+  </Card>
+  <Card title="47 Models" icon="brain">
+    Access frontier, smart, balanced, fast, and local tier models
+  </Card>
+  <Card title="Intelligent Routing" icon="route">
+    Automatic model selection based on complexity scoring
+  </Card>
+  <Card title="Cost Optimization" icon="dollar-sign">
+    Built-in usage tracking and cost management
+  </Card>
+</CardGroup>
+
+## Architecture
+
+The LLM system is implemented across two layers:
+
+### TypeScript Router (`src/llm-router.ts`)
+Handles OpenAI-compatible providers through a unified interface:
+- Route selection via `llm::route`
+- Completion handling via `llm::complete`
+- Automatic retry with exponential backoff
+- Cost tracking integration
+
+### Rust Router (`crates/llm-router/src/main.rs`)
+High-performance routing engine:
+- Complexity-based model selection
+- Provider health monitoring
+- Usage statistics aggregation
+- Multi-driver support (Anthropic, OpenAI, Gemini, Bedrock)
+
+## Model Tiers
+
+Models are organized into 5 tiers based on capability and cost:
+
+| Tier | Use Case | Example Models |
+|------|----------|----------------|
+| **Frontier** | Most complex reasoning, research | Claude Opus 4.6, GPT o3, Gemini 2.5 Pro |
+| **Smart** | Advanced tasks, coding | Claude Sonnet 4.6, GPT-4o, Grok-2 |
+| **Balanced** | General purpose, cost-effective | DeepSeek Chat, Llama 3.3 70B, Command R |
+| **Fast** | Quick responses, simple tasks | Claude Haiku 4.5, GPT-4o mini, Gemini 2.5 Flash |
+| **Local** | Self-hosted, privacy-first | Ollama, vLLM, LM Studio |
+
+## Quick Start
+
+### Using Complexity-Based Routing
+
+```typescript
+import { trigger } from 'iii-sdk';
+
+// Automatic model selection based on complexity
+const selection = await trigger('llm::route', {
+  message: 'Analyze this codebase and suggest improvements',
+  toolCount: 15
+});
+// Returns: { provider: 'anthropic', model: 'claude-opus-4-6', maxTokens: 8192 }
+
+// Execute completion
+const result = await trigger('llm::complete', {
+  model: selection,
+  systemPrompt: 'You are a code review expert',
+  messages: [{ role: 'user', content: 'Review this PR' }],
+  tools: [{ id: 'file::read', description: 'Read file contents' }]
+});
+```
+
+### Direct Model Selection
+
+```typescript
+const result = await trigger('llm::complete', {
+  model: {
+    provider: 'deepseek',
+    model: 'deepseek-reasoner',
+    maxTokens: 4096
+  },
+  messages: [{ role: 'user', content: 'Solve this math problem' }]
+});
+```
+
+## Provider Configuration
+
+Providers are configured via environment variables:
+
+```bash
+# Required API keys
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
+export GOOGLE_API_KEY="AIza..."
+
+# Optional providers
+export DEEPSEEK_API_KEY="..."
+export GROQ_API_KEY="..."
+export XAI_API_KEY="..."
+
+# Local providers (no key needed)
+# Ollama: http://localhost:11434
+# vLLM: http://localhost:8000
+# LM Studio: http://localhost:1234
+```
+
+## CLI Usage
+
+```bash
+# List all models
+agentos models list
+
+# List providers
+agentos models providers
+
+# Describe a specific model
+agentos models describe claude-sonnet-4-6
+
+# View model aliases
+agentos models aliases
+```
+
+## Cost Tracking
+
+All completions automatically track usage and costs:
+
+```typescript
+// Cost data is stored in state::costs
+const costs = await trigger('state::get', {
+  scope: 'costs',
+  key: '2026-03-09'
+});
+
+// Returns:
+// {
+//   "claude-sonnet-4-6": { cost: 0.45, calls: 23 },
+//   "gpt-4o-mini": { cost: 0.12, calls: 67 },
+//   "totalCost": 0.57
+// }
+```
+
+## Response Format
+
+All LLM completions return a standardized format:
+
+```typescript
+interface CompletionResponse {
+  content: string;              // Text response
+  model: string;                // Model used
+  toolCalls: Array<{            // Tool invocations (if any)
+    callId: string;
+    id: string;
+    arguments: Record<string, any>;
+  }>;
+  usage: {
+    input: number;              // Input tokens
+    output: number;             // Output tokens
+    total: number;              // Total tokens
+  };
+  durationMs: number;           // Request duration
+}
+```
+
+## Fallback & Retry
+
+The router includes automatic retry logic:
+
+- **429 Rate Limit**: Exponential backoff (1s, 2s, 4s)
+- **Network Errors**: 3 attempts before failing
+- **Provider Outages**: Manual fallback to alternate provider
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Browse Providers" icon="list" href="/api/llm/providers">
+    View all 25 supported providers
+  </Card>
+  <Card title="Explore Models" icon="database" href="/api/llm/models">
+    See all 47 available models with pricing
+  </Card>
+  <Card title="Routing Logic" icon="sitemap" href="/api/llm/routing">
+    Learn about complexity-based model selection
+  </Card>
+</CardGroup>

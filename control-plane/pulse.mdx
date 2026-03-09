@@ -1,0 +1,475 @@
+---
+title: 'Pulse'
+description: 'Scheduled agent invocation with context-aware ticks and budget gating'
+---
+
+The **Pulse** crate enables scheduled agent invocation via cron expressions. Agents receive contextual data (missions, budget, hierarchy, directives) and are skipped if over budget.
+
+## Overview
+
+- **Purpose:** Cron-based agent invocation with rich context
+- **LOC:** ~250
+- **Functions:** 4 (register, invoke, status, toggle) + 1 internal (tick)
+- **Endpoints:** 4 REST
+- **Source:** `crates/pulse/src/main.rs`
+
+## Core Concepts
+
+### Pulse Configuration
+
+```rust
+struct PulseConfig {
+    agent_id: String,
+    realm_id: String,
+    cron: String,                  // Cron expression
+    enabled: bool,
+    context_mode: ContextMode,     // Thin or Full
+    timeout_secs: Option<u64>,
+    max_retries: Option<u32>,
+}
+```
+
+### Context Modes
+
+```rust
+enum ContextMode {
+    Thin,  // Minimal: agentId, realmId, mode
+    Full,  // Rich: missions, budget, hierarchy chain, directives
+}
+```
+
+### Pulse Run
+
+```rust
+struct PulseRun {
+    id: String,                    // "run-{uuid}"
+    agent_id: String,
+    realm_id: String,
+    status: PulseStatus,           // Running, Completed, Failed
+    source: String,                // "cron" or "manual"
+    context_snapshot: Option<Value>,
+    started_at: String,
+    finished_at: Option<String>,
+    error: Option<String>,
+}
+```
+
+## Functions
+
+### pulse::register
+
+Register a scheduled pulse for an agent.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="agentId" type="string" required>
+  Agent identifier
+</ParamField>
+
+<ParamField path="cron" type="string" required>
+  Cron expression (see format below)
+</ParamField>
+
+<ParamField path="contextMode" type="string" default="Thin">
+  Context mode: "Thin" or "Full"
+</ParamField>
+
+<ParamField path="timeoutSecs" type="number">
+  Invocation timeout in seconds
+</ParamField>
+
+<ParamField path="maxRetries" type="number">
+  Max retry attempts on failure
+</ParamField>
+
+**Cron Format:**
+
+```
+sec  min  hour  day  month  weekday
+0    */5  *     *    *      *          Every 5 minutes
+0    0    */2   *    *      *          Every 2 hours
+0    0    9     *    *      1-5        9am on weekdays
+0    30   8     1    *      *          8:30am on 1st of month
+```
+
+**Example:**
+
+```rust
+// Every 5 minutes with full context
+iii.trigger("pulse::register", json!({
+    "realmId": "r-1",
+    "agentId": "agent-ops",
+    "cron": "0 */5 * * * *",
+    "contextMode": "Full",
+    "timeoutSecs": 300
+})).await?;
+
+// Daily at 9am with thin context
+iii.trigger("pulse::register", json!({
+    "realmId": "r-1",
+    "agentId": "agent-reporter",
+    "cron": "0 0 9 * * *",
+    "contextMode": "Thin"
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+POST /api/pulse/register
+Content-Type: application/json
+
+{
+  "realmId": "r-1",
+  "agentId": "agent-ops",
+  "cron": "0 */5 * * * *",
+  "contextMode": "Full"
+}
+```
+
+**Cron Trigger Registration (pulse/src/main.rs:94-104):**
+
+```rust
+let _ = iii
+    .trigger("engine::triggers::register", json!({
+        "type": "cron",
+        "function": "pulse::tick",
+        "config": {
+            "schedule": req.cron,
+            "data": { "agentId": req.agent_id, "realmId": req.realm_id },
+        },
+    }))
+    .await
+    .map_err(|e| IIIError::Handler(format!("failed to register cron trigger: {e}")))?;
+```
+
+### pulse::invoke
+
+Manually invoke an agent pulse (bypasses cron schedule).
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="agentId" type="string" required>
+  Agent identifier
+</ParamField>
+
+<ParamField path="contextMode" type="string">
+  Override context mode
+</ParamField>
+
+**Example:**
+
+```rust
+let run = iii.trigger("pulse::invoke", json!({
+    "realmId": "r-1",
+    "agentId": "agent-ops",
+    "contextMode": "Full"
+})).await?;
+
+// Returns:
+// {
+//   "id": "run-abc123",
+//   "status": "Completed",
+//   "startedAt": "2024-03-09T10:30:00Z",
+//   "finishedAt": "2024-03-09T10:30:15Z",
+//   ...
+// }
+```
+
+**REST Endpoint:**
+```bash
+POST /api/pulse/invoke
+Content-Type: application/json
+
+{
+  "realmId": "r-1",
+  "agentId": "agent-ops"
+}
+```
+
+**Context Building (pulse/src/main.rs:17-71):**
+
+```rust
+async fn build_context(iii: &III, agent_id: &str, realm_id: &str, mode: &ContextMode) -> Value {
+    match mode {
+        ContextMode::Thin => {
+            json!({
+                "agentId": agent_id,
+                "realmId": realm_id,
+                "mode": "thin",
+            })
+        }
+        ContextMode::Full => {
+            // Fetch active missions
+            let missions = iii
+                .trigger("mission::list", json!({
+                    "realmId": realm_id,
+                    "assigneeId": agent_id,
+                    "status": "active",
+                }))
+                .await
+                .unwrap_or(json!({ "missions": [] }));
+
+            // Check budget
+            let budget = iii
+                .trigger("ledger::check", json!({
+                    "realmId": realm_id,
+                    "agentId": agent_id,
+                }))
+                .await
+                .unwrap_or(json!({ "allowed": true }));
+
+            // Get hierarchy chain
+            let hierarchy = iii
+                .trigger("hierarchy::chain", json!({
+                    "realmId": realm_id,
+                    "agentId": agent_id,
+                }))
+                .await
+                .unwrap_or(json!({ "chain": [] }));
+
+            // Get active directives
+            let directives = iii
+                .trigger("directive::list", json!({
+                    "realmId": realm_id,
+                    "status": "active",
+                }))
+                .await
+                .unwrap_or(json!({ "directives": [] }));
+
+            json!({
+                "agentId": agent_id,
+                "realmId": realm_id,
+                "mode": "full",
+                "missions": missions["missions"],
+                "budget": budget,
+                "chain": hierarchy["chain"],
+                "directives": directives["directives"],
+            })
+        }
+    }
+}
+```
+
+<Note>
+  Full context mode gives agents comprehensive awareness of their current state, enabling autonomous decision-making.
+</Note>
+
+**Agent Invocation (pulse/src/main.rs:138-144):**
+
+```rust
+let result = iii
+    .trigger("agent::chat", json!({
+        "agentId": req.agent_id,
+        "message": "You have been invoked via pulse. Review your current context and take appropriate action.",
+        "context": context,
+    }))
+    .await;
+```
+
+### pulse::status
+
+Get pulse configuration and recent runs.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="agentId" type="string" required>
+  Agent identifier
+</ParamField>
+
+**Example:**
+
+```rust
+let status = iii.trigger("pulse::status", json!({
+    "realmId": "r-1",
+    "agentId": "agent-ops"
+})).await?;
+
+// Returns:
+// {
+//   "config": {
+//     "agentId": "agent-ops",
+//     "cron": "0 */5 * * * *",
+//     "enabled": true,
+//     "contextMode": "Full"
+//   },
+//   "recentRuns": [
+//     { "id": "run-1", "status": "Completed", "startedAt": "...", ... },
+//     { "id": "run-2", "status": "Completed", "startedAt": "...", ... },
+//     ...
+//   ]
+// }
+```
+
+**REST Endpoint:**
+```bash
+GET /api/pulse/r-1/agent-ops
+```
+
+### pulse::toggle
+
+Enable or disable a pulse.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="agentId" type="string" required>
+  Agent identifier
+</ParamField>
+
+<ParamField path="enabled" type="boolean" required>
+  true = enable, false = disable
+</ParamField>
+
+**Example:**
+
+```rust
+// Disable pulse
+iii.trigger("pulse::toggle", json!({
+    "realmId": "r-1",
+    "agentId": "agent-ops",
+    "enabled": false
+})).await?;
+
+// Re-enable pulse
+iii.trigger("pulse::toggle", json!({
+    "realmId": "r-1",
+    "agentId": "agent-ops",
+    "enabled": true
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+PATCH /api/pulse/r-1/agent-ops
+Content-Type: application/json
+
+{
+  "enabled": false
+}
+```
+
+### pulse::tick (internal)
+
+Internal function called by cron triggers.
+
+**Budget Gating (pulse/src/main.rs:188-202):**
+
+```rust
+if !config.enabled {
+    return Ok(json!({ "skipped": true, "reason": "disabled" }));
+}
+
+let budget_check = iii
+    .trigger("ledger::check", json!({
+        "realmId": realm_id,
+        "agentId": agent_id,
+    }))
+    .await
+    .unwrap_or(json!({ "allowed": true }));
+
+if budget_check["allowed"] == false {
+    return Ok(json!({ "skipped": true, "reason": "budget_exceeded" }));
+}
+
+invoke_pulse(iii, InvokeRequest { /* ... */ }).await
+```
+
+<Note>
+  Pulse automatically skips invocations if the agent is over budget, preventing runaway costs.
+</Note>
+
+## Storage Scopes
+
+- `realm:{realmId}:pulse:config` - Pulse configurations
+- `realm:{realmId}:pulse:runs` - Run history
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Monitoring Agents" icon="eye">
+    Schedule agents to check system health every 5 minutes and alert on issues.
+  </Card>
+  <Card title="Daily Reports" icon="file-chart-column">
+    Generate and send daily summary reports at 9am via scheduled pulse.
+  </Card>
+  <Card title="Background Tasks" icon="gears">
+    Run maintenance tasks (cleanup, optimization) on a regular schedule.
+  </Card>
+  <Card title="Proactive Agents" icon="robot">
+    Agents autonomously check their mission queues and take action without human prompting.
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Start with thin context">
+    Use Thin mode initially to minimize overhead. Switch to Full when agents need rich context.
+  </Step>
+  
+  <Step title="Set reasonable intervals">
+    Don't poll too frequently. Every 5 minutes is usually sufficient for monitoring.
+  </Step>
+  
+  <Step title="Use full context for decision-making">
+    If agents need to make autonomous decisions, use Full mode to provide complete picture.
+  </Step>
+  
+  <Step title="Monitor run history">
+    Regularly check pulse::status to ensure agents are completing successfully.
+  </Step>
+  
+  <Step title="Disable when not needed">
+    Use pulse::toggle to pause scheduled invocations during maintenance or debugging.
+  </Step>
+  
+  <Step title="Combine with missions">
+    Pulsed agents can checkout missions from the queue and work on them autonomously.
+  </Step>
+</Steps>
+
+## Agent Prompt Example
+
+When a pulse invocation occurs with Full context, the agent receives:
+
+```json
+{
+  "agentId": "agent-ops",
+  "realmId": "r-1",
+  "mode": "full",
+  "missions": [
+    { "id": "msn-1", "title": "Check system health", "status": "Active", ... }
+  ],
+  "budget": {
+    "allowed": true,
+    "utilizationPct": 45.0,
+    "remainingCents": 5500
+  },
+  "chain": [
+    { "agentId": "agent-ops", "title": "DevOps Agent", "reportsTo": "agent-cto" },
+    { "agentId": "agent-cto", "title": "CTO", "reportsTo": "agent-ceo" }
+  ],
+  "directives": [
+    { "id": "dir-1", "title": "Maintain 99.9% uptime", "level": "realm" }
+  ]
+}
+```
+
+The agent can then:
+1. Review active missions and make progress
+2. Check budget and adjust behavior if low
+3. Understand reporting structure for escalation
+4. Align actions with active directives
+
+## Related
+
+- [Mission](/control-plane/mission) - Agents can auto-checkout missions during pulse
+- [Ledger](/control-plane/ledger) - Pulse respects budget limits
+- [Directive](/control-plane/directive) - Full context includes active directives

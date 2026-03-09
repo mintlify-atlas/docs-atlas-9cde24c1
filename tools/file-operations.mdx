@@ -1,0 +1,429 @@
+---
+title: "File Operations"
+description: "Read, write, list, search, and patch files with security-enforced path containment"
+---
+
+AgentOS provides 6 file operation tools with security-first design, including path containment, workspace isolation, and comprehensive error handling.
+
+## Available Tools
+
+### file_read
+
+Read file contents with optional size limits.
+
+<ParamField path="path" type="string" required>
+  File path relative to workspace root
+</ParamField>
+
+<ParamField path="maxBytes" type="number">
+  Maximum bytes to read (optional, truncates if exceeded)
+</ParamField>
+
+<ResponseField name="content" type="string">
+  File contents (UTF-8)
+</ResponseField>
+
+<ResponseField name="path" type="string">
+  Resolved absolute path
+</ResponseField>
+
+<ResponseField name="size" type="number">
+  Total file size in bytes
+</ResponseField>
+
+**Example:**
+
+```typescript
+const result = await trigger("tool::file_read", {
+  path: "src/index.ts",
+  maxBytes: 10000
+});
+// => { content: "...", path: "/workspace/src/index.ts", size: 8432 }
+```
+
+**Security:**
+- All paths resolved against `WORKSPACE_ROOT`
+- `assertPathContained()` prevents path traversal attacks
+- Symbolic links resolved with `realpathSync()` before validation
+
+---
+
+### file_write
+
+Write content to a file.
+
+<ParamField path="path" type="string" required>
+  File path relative to workspace root
+</ParamField>
+
+<ParamField path="content" type="string" required>
+  Content to write (UTF-8 string)
+</ParamField>
+
+<ResponseField name="written" type="boolean">
+  `true` if successful
+</ResponseField>
+
+<ResponseField name="path" type="string">
+  Resolved absolute path
+</ResponseField>
+
+<ResponseField name="size" type="number">
+  Bytes written
+</ResponseField>
+
+**Example:**
+
+```typescript
+const result = await trigger("tool::file_write", {
+  path: "output/data.json",
+  content: JSON.stringify({ status: "ok" }, null, 2)
+});
+// => { written: true, path: "/workspace/output/data.json", size: 23 }
+```
+
+**Security:**
+- Path containment enforced
+- No shell expansion or glob patterns
+- Creates parent directories if needed
+
+---
+
+### file_list
+
+List directory contents with file metadata.
+
+<ParamField path="path" type="string">
+  Directory path (defaults to workspace root)
+</ParamField>
+
+<ParamField path="recursive" type="boolean">
+  Enable recursive listing (not yet implemented)
+</ParamField>
+
+<ResponseField name="path" type="string">
+  Resolved directory path
+</ResponseField>
+
+<ResponseField name="entries" type="array">
+  Array of file/directory entries:
+  - `name` (string) — filename
+  - `type` (string) — "file" or "directory"
+  - `size` (number) — size in bytes
+  - `modified` (string) — ISO timestamp
+</ResponseField>
+
+**Example:**
+
+```typescript
+const result = await trigger("tool::file_list", {
+  path: "src"
+});
+// => {
+//   path: "/workspace/src",
+//   entries: [
+//     { name: "index.ts", type: "file", size: 8432, modified: "2026-03-09T10:30:00Z" },
+//     { name: "utils", type: "directory", size: 4096, modified: "2026-03-08T14:20:00Z" }
+//   ]
+// }
+```
+
+**Implementation Note:**
+- Uses `readdir()` with `{ withFileTypes: true }`
+- Calls `stat()` for each entry to get metadata
+- Errors on individual files handled gracefully with `safeCall()`
+
+---
+
+### apply_patch
+
+Apply a unified diff patch to a file.
+
+<ParamField path="path" type="string" required>
+  File path to patch
+</ParamField>
+
+<ParamField path="patch" type="string" required>
+  Unified diff format patch
+</ParamField>
+
+<ResponseField name="patched" type="boolean">
+  `true` if successfully applied
+</ResponseField>
+
+<ResponseField name="path" type="string">
+  Resolved file path
+</ResponseField>
+
+**Example:**
+
+```typescript
+const patch = `@@ -1,3 +1,3 @@
+-const x = 1;
++const x = 2;
+ export { x };
+`;
+
+const result = await trigger("tool::apply_patch", {
+  path: "src/config.ts",
+  patch
+});
+// => { patched: true, path: "/workspace/src/config.ts" }
+```
+
+**Patch Format:**
+- Standard unified diff format
+- Lines starting with `-` are removed
+- Lines starting with `+` are added
+- Context lines (no prefix) preserved
+- Hunk headers (`@@`) specify line offsets
+
+**Implementation:**
+```typescript
+// src/tools.ts:129-165
+const lines = content.split("\n");
+const patchLines = patch.split("\n");
+let output = [...lines];
+let offset = 0;
+
+for (const line of patchLines) {
+  if (line.startsWith("@@")) {
+    const match = line.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@/);
+    if (match) offset = parseInt(match[1]) - 1;
+  } else if (line.startsWith("-")) {
+    const idx = output.indexOf(line.slice(1), offset);
+    if (idx >= 0) output.splice(idx, 1);
+  } else if (line.startsWith("+")) {
+    output.splice(offset, 0, line.slice(1));
+    offset++;
+  }
+}
+
+await writeFile(resolved, output.join("\n"), "utf-8");
+```
+
+---
+
+### file_search
+
+Search file contents using regex patterns (placeholder for future implementation).
+
+<Note>
+Currently implemented via `tool::shell_exec` with `grep` command. Dedicated search tool coming in future release.
+</Note>
+
+**Current Workaround:**
+
+```typescript
+// Use shell_exec for file search
+const result = await trigger("tool::shell_exec", {
+  argv: ["grep", "-rn", "pattern", "src/"],
+  cwd: "."
+});
+```
+
+---
+
+### file_watch
+
+Watch files for changes (placeholder for future implementation).
+
+<Note>
+File watching capabilities will be added in a future release using Node.js `fs.watch()` or `chokidar`.
+</Note>
+
+---
+
+## Security Architecture
+
+All file operations enforce strict security boundaries:
+
+### Path Containment
+
+```typescript
+// src/shared/config.ts
+export const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || process.cwd();
+
+export function assertPathContained(filePath: string): void {
+  const real = realpathSync(filePath); // Resolve symlinks
+  const base = realpathSync(WORKSPACE_ROOT);
+  
+  if (!real.startsWith(base + path.sep) && real !== base) {
+    throw new Error(
+      `Path traversal denied: ${filePath} resolves outside workspace`
+    );
+  }
+}
+```
+
+**Protection Against:**
+- `../../../etc/passwd` — blocked by path traversal check
+- Symbolic links to `/etc` — resolved and validated
+- Absolute paths outside workspace — rejected
+
+### Audit Logging
+
+All file operations are logged to the security audit chain:
+
+```typescript
+triggerVoid("security::audit", {
+  type: "file_write",
+  detail: { path: resolved, size: content.length },
+  timestamp: Date.now()
+});
+```
+
+### Metrics Collection
+
+Tools wrap execution in metrics helpers:
+
+```typescript
+return withToolMetrics("tool::file_read", async () => {
+  // ... implementation
+});
+
+// Emits:
+// - tool_execution_total{toolId="tool::file_read", status="success"} = 1
+// - function_call_duration_ms{functionId="tool::file_read"} = 42 (histogram)
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always use relative paths">
+    Specify paths relative to workspace root. AgentOS resolves them safely:
+    
+    ```typescript
+    // Good
+    await trigger("tool::file_read", { path: "src/index.ts" });
+    
+    // Bad (will be rejected if outside workspace)
+    await trigger("tool::file_read", { path: "/etc/passwd" });
+    ```
+  </Accordion>
+
+  <Accordion title="Handle large files with maxBytes">
+    For large files, use `maxBytes` to prevent memory issues:
+    
+    ```typescript
+    const result = await trigger("tool::file_read", {
+      path: "logs/app.log",
+      maxBytes: 1024 * 1024 // 1MB
+    });
+    
+    if (result.size > result.content.length) {
+      console.log("File was truncated");
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Check file existence before writing">
+    Use `file_list` to check if a file exists:
+    
+    ```typescript
+    const dir = await trigger("tool::file_list", { path: "output" });
+    const exists = dir.entries.some(e => e.name === "report.json");
+    
+    if (exists) {
+      // Decide whether to overwrite
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Use apply_patch for targeted edits">
+    For surgical code changes, prefer `apply_patch` over full file rewrites:
+    
+    ```typescript
+    // More precise than reading, editing, and writing entire file
+    await trigger("tool::apply_patch", {
+      path: "src/config.ts",
+      patch: diffString
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Patterns
+
+### Read-Modify-Write
+
+```typescript
+// 1. Read current content
+const { content, path } = await trigger("tool::file_read", {
+  path: "config.json"
+});
+
+// 2. Parse and modify
+const config = JSON.parse(content);
+config.version = "2.0.0";
+
+// 3. Write back
+await trigger("tool::file_write", {
+  path: "config.json",
+  content: JSON.stringify(config, null, 2)
+});
+```
+
+### Recursive Directory Traversal
+
+```typescript
+async function listRecursive(dirPath: string): Promise<string[]> {
+  const results: string[] = [];
+  const { entries } = await trigger("tool::file_list", { path: dirPath });
+  
+  for (const entry of entries) {
+    const fullPath = `${dirPath}/${entry.name}`;
+    if (entry.type === "file") {
+      results.push(fullPath);
+    } else if (entry.type === "directory") {
+      results.push(...await listRecursive(fullPath));
+    }
+  }
+  
+  return results;
+}
+```
+
+### Batch File Processing
+
+```typescript
+const { entries } = await trigger("tool::file_list", { path: "src" });
+
+const files = entries
+  .filter(e => e.type === "file" && e.name.endsWith(".ts"))
+  .map(e => e.name);
+
+for (const file of files) {
+  const { content } = await trigger("tool::file_read", {
+    path: `src/${file}`
+  });
+  
+  // Process content...
+}
+```
+
+## Error Handling
+
+All file tools throw descriptive errors:
+
+```typescript
+try {
+  await trigger("tool::file_read", { path: "missing.txt" });
+} catch (err) {
+  console.error(err.message);
+  // "ENOENT: no such file or directory, open '/workspace/missing.txt'"
+}
+
+try {
+  await trigger("tool::file_write", { path: "../../../etc/passwd", content: "..." });
+} catch (err) {
+  console.error(err.message);
+  // "Path traversal denied: ../../../etc/passwd resolves outside workspace"
+}
+```
+
+## Related Tools
+
+- **[Code Tools](/tools/code-tools)** — Analyze, format, and lint files
+- **[Shell Execution](/tools/overview#shell-execution)** — Run file system commands
+- **[Data Processing](/tools/overview#data-processing)** — Parse file contents (JSON, CSV, YAML)

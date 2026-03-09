@@ -1,0 +1,141 @@
+---
+title: REST API Overview
+description: Overview of the AgentOS REST API, authentication, and available endpoints
+---
+
+The AgentOS REST API provides HTTP endpoints for managing agents, workflows, and chat completions. The API is built on the iii-engine and runs on port 3111 by default.
+
+## Base URL
+
+The default base URL for all API endpoints is:
+
+```
+http://localhost:3111
+```
+
+You can configure the port and host in `config.yaml`:
+
+```yaml
+modules:
+  - class: modules::api::RestApiModule
+    config:
+      port: 3111
+      host: 0.0.0.0
+      default_timeout: 300000
+      concurrency_request_limit: 2048
+```
+
+## Authentication
+
+All API endpoints require authentication via API keys. Include your API key in the request headers:
+
+```bash
+Authorization: Bearer YOUR_API_KEY
+```
+
+To set an API key for a provider:
+
+```bash
+agentos config set-key anthropic $ANTHROPIC_API_KEY
+```
+
+## Rate Limiting
+
+The API implements GCRA (Generic Cell Rate Algorithm) rate limiting per IP address:
+
+- **Read operations**: 200 requests/hour
+- **Write operations**: 100 requests/hour  
+- **Message operations**: 60 requests/hour
+- **Workflow runs**: 100 requests/hour
+
+When rate limited, you'll receive a 429 status code with a `retryAfter` value in seconds.
+
+## Security Headers
+
+All responses include security headers:
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `X-XSS-Protection: 1; mode=block`
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+
+## CORS Configuration
+
+CORS is enabled by default with the following settings:
+
+```yaml
+cors:
+  allowed_origins: ['*']
+  allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
+  allowed_headers: ['*']
+```
+
+## Available Endpoints
+
+### OpenAI Compatibility
+
+<Card title="Chat Completions" icon="message" href="/api/rest/chat">
+  OpenAI-compatible chat completions endpoint
+</Card>
+
+### Agent Management
+
+<Card title="Agent Endpoints" icon="robot" href="/api/rest/agents">
+  Create, list, get, delete, and message agents
+</Card>
+
+### Workflow Execution
+
+<Card title="Workflow Endpoints" icon="diagram-project" href="/api/rest/workflows">
+  Create, list, run workflows and get run status
+</Card>
+
+## Health Check
+
+Check the API health status:
+
+```bash
+GET /api/health
+```
+
+**Response:**
+
+```json
+{
+  "status": "healthy",
+  "version": "0.1.0",
+  "workers": 15,
+  "uptime": 3600.5
+}
+```
+
+## Error Handling
+
+The API returns standard HTTP status codes:
+
+- `200 OK` - Request succeeded
+- `201 Created` - Resource created successfully
+- `204 No Content` - Request succeeded with no response body
+- `401 Unauthorized` - Missing or invalid authentication
+- `404 Not Found` - Resource not found
+- `429 Too Many Requests` - Rate limit exceeded
+- `500 Internal Server Error` - Server error
+
+**Error Response Format:**
+
+```json
+{
+  "error": "Error message",
+  "retryAfter": 60
+}
+```
+
+## Observability
+
+The API includes OpenTelemetry metrics:
+
+- `api_request_duration_ms` - Request duration histogram
+- `function_error_total` - Error counter by function
+- Request counts by path, method, and status code
+
+Metrics can be exported via the configured exporter in `config.yaml`.

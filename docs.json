@@ -1,122 +1,195 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "AgentOS",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#eec112",
+    "light": "#7b640c",
+    "dark": "#050404"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/1ddbdd0a-3994-42a5-82ff-334494c88bb6.svg",
+  "logo": {
+    "light": "https://media.brand.dev/1ddbdd0a-3994-42a5-82ff-334494c88bb6.svg",
+    "dark": "https://media.brand.dev/1ddbdd0a-3994-42a5-82ff-334494c88bb6.svg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/iii-hq/agentos"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/iii-hq/agentos"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/overview",
+              "concepts/worker",
+              "concepts/function",
+              "concepts/trigger",
+              "concepts/architecture"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "CLI Reference",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "cli/overview",
+              "cli/agent-commands",
+              "cli/workflow-commands",
+              "cli/config-commands",
+              "cli/security-commands"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Tools & Capabilities",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "tools/overview",
+              "tools/file-operations",
+              "tools/web-tools",
+              "tools/code-tools",
+              "tools/profiles"
+            ]
+          },
+          {
+            "group": "Control Plane",
+            "pages": [
+              "control-plane/overview",
+              "control-plane/realm",
+              "control-plane/hierarchy",
+              "control-plane/directive",
+              "control-plane/mission",
+              "control-plane/ledger",
+              "control-plane/council",
+              "control-plane/pulse",
+              "control-plane/bridge"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/overview",
+              "security/rbac",
+              "security/audit-chain",
+              "security/sandboxing",
+              "security/vault"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/swarms",
+              "advanced/knowledge-graph",
+              "advanced/session-replay",
+              "advanced/a2a-protocol",
+              "advanced/mcp-integration",
+              "advanced/skillkit"
+            ]
+          },
+          {
+            "group": "Templates & Examples",
+            "pages": [
+              "templates/agents",
+              "templates/hands",
+              "templates/workflows",
+              "templates/integrations"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Rust API",
             "pages": [
-              "api-reference/introduction"
+              "api/rust/agent-core",
+              "api/rust/security",
+              "api/rust/memory",
+              "api/rust/llm-router"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "TypeScript API",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/typescript/agent-core",
+              "api/typescript/tools",
+              "api/typescript/security",
+              "api/typescript/workflow"
+            ]
+          },
+          {
+            "group": "REST API",
+            "pages": [
+              "api/rest/overview",
+              "api/rest/chat",
+              "api/rest/agents",
+              "api/rest/workflows"
+            ]
+          },
+          {
+            "group": "LLM Providers",
+            "pages": [
+              "api/llm/overview",
+              "api/llm/providers",
+              "api/llm/models",
+              "api/llm/routing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Channels",
+        "groups": [
+          {
+            "group": "Channel Adapters",
+            "pages": [
+              "channels/overview",
+              "channels/messaging",
+              "channels/social",
+              "channels/custom"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Developer Guide",
+            "pages": [
+              "development/setup",
+              "development/creating-workers",
+              "development/creating-tools",
+              "development/creating-agents",
+              "development/testing"
+            ]
+          },
+          {
+            "group": "Migration",
+            "pages": [
+              "development/migration/overview",
+              "development/migration/langchain",
+              "development/migration/openclaw"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

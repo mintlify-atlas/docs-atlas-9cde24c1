@@ -1,0 +1,194 @@
+---
+title: "Tools Overview"
+description: "Comprehensive catalog of AgentOS's 60+ built-in tools for file operations, web access, code analysis, data processing, and system control"
+---
+
+AgentOS provides **60+ built-in tools** organized into 14 categories, offering agents comprehensive capabilities for file operations, web access, code analysis, system monitoring, and more. Tools are efficiently filtered by profile to optimize token usage and reduce prompt overhead.
+
+## Tool Categories
+
+<CardGroup cols={2}>
+  <Card title="File Operations" icon="folder" href="/tools/file-operations">
+    Read, write, list, search, patch, and watch files with path containment
+    
+    **6 tools** · read · write · list · search · apply_patch · watch
+  </Card>
+
+  <Card title="Web Tools" icon="globe" href="/tools/web-tools">
+    Search, fetch, screenshot, and browser automation with SSRF protection
+    
+    **4 tools** · search · fetch · screenshot · browser actions
+  </Card>
+
+  <Card title="Code Tools" icon="code" href="/tools/code-tools">
+    Analyze, format, lint, test, and explain code across multiple languages
+    
+    **5 tools** · analyze · format · lint · test · explain
+  </Card>
+
+  <Card title="Shell Execution" icon="terminal">
+    Execute commands with sandbox isolation and allowlist enforcement
+    
+    **2 tools** · exec · spawn
+  </Card>
+
+  <Card title="Data Processing" icon="database">
+    JSON, CSV, YAML parsing and transformation utilities
+    
+    **8 tools** · json_parse/stringify/query/transform · csv_parse/stringify · yaml_parse/stringify
+  </Card>
+
+  <Card title="Memory" icon="brain">
+    Store, recall, and search episodic memory with metadata
+    
+    **3 tools** · store · recall · search
+  </Card>
+
+  <Card title="Scheduling" icon="clock">
+    Time-based reminders and cron job management
+    
+    **4 tools** · schedule_reminder · cron_create/list/delete
+  </Card>
+
+  <Card title="Collaboration" icon="check-square">
+    Task management and todo tracking
+    
+    **4 tools** · todo_create/list/update/delete
+  </Card>
+
+  <Card title="Media" icon="image">
+    Image analysis, audio transcription, TTS, and media downloads
+    
+    **5 tools** · image_analyze · audio_transcribe · tts_speak · media_download · image_generate_prompt
+  </Card>
+
+  <Card title="Knowledge Graph" icon="project-diagram">
+    Entity-relation graph with traversal and visualization
+    
+    **3 tools** · kg_add · kg_query · kg_visualize
+  </Card>
+
+  <Card title="Inter-Agent" icon="network-wired">
+    Agent discovery, delegation, and messaging
+    
+    **3 tools** · agent_list · agent_delegate · channel_send
+  </Card>
+
+  <Card title="System" icon="server">
+    System info, process monitoring, disk usage, network checks
+    
+    **5 tools** · env_get · system_info · process_list · disk_usage · network_check
+  </Card>
+
+  <Card title="Utility" icon="tools">
+    UUID generation, hashing, regex matching, snapshots
+    
+    **4 tools** · uuid_generate · hash_compute · regex_match/replace
+  </Card>
+
+  <Card title="Database" icon="table">
+    SQL query building with parameterization and injection prevention
+    
+    **4 tools** · db_query · db_insert · db_update · db_delete
+  </Card>
+</CardGroup>
+
+## Tool Profiles
+
+AgentOS uses **tool profiles** to filter which tools are available to each agent, reducing token overhead and improving performance. See [Tool Profiles](/tools/profiles) for details.
+
+| Profile | Tools Included | Use Case |
+|---------|---------------|----------|
+| `chat` | web_search, web_fetch, memory_recall, memory_store | General conversation and web research |
+| `code` | file_*, shell_exec, code_*, apply_patch | Software development and debugging |
+| `research` | web_*, browser_*, memory_* | Deep research and information gathering |
+| `ops` | shell_exec, system_*, process_*, disk_*, network_* | System administration and monitoring |
+| `data` | json_*, csv_*, yaml_*, regex_*, file_* | Data processing and transformation |
+| `full` | tool::*, memory::* | All tools available (for advanced agents) |
+
+## Tool Architecture
+
+### Worker Registration
+
+Tools are registered as iii-engine functions in two TypeScript workers:
+
+- **`tools.ts`** — 22 core tools (file, web, shell, agent communication)
+- **`tools-extended.ts`** — 38 extended tools (scheduling, media, data, system, code)
+
+```typescript
+import { init } from "iii-sdk";
+
+const { registerFunction, trigger } = init(ENGINE_URL, { workerName: "tools" });
+
+registerFunction(
+  {
+    id: "tool::file_read",
+    description: "Read file contents with path containment",
+    metadata: { category: "tool" },
+  },
+  async ({ path, maxBytes }: { path: string; maxBytes?: number }) => {
+    const resolved = resolve(WORKSPACE_ROOT, path);
+    assertPathContained(resolved); // Security: prevent path traversal
+    const content = await readFile(resolved, "utf-8");
+    return { content, path: resolved, size: content.length };
+  }
+);
+```
+
+### Security Features
+
+All tools include security safeguards:
+
+- **Path containment** — File operations restricted to workspace
+- **SSRF protection** — Web tools validate URLs against private/reserved IP ranges
+- **Command allowlist** — Shell execution limited to approved binaries
+- **Resource limits** — Timeouts, memory caps, and rate limiting
+- **Audit logging** — All tool executions logged to security audit chain
+
+### Metrics & Observability
+
+Tools emit OpenTelemetry metrics:
+
+```typescript
+recordMetric("tool_execution_total", 1, { toolId, status: "success" });
+recordMetric(
+  "function_call_duration_ms",
+  Date.now() - start,
+  { functionId: toolId, status: "success" },
+  "histogram"
+);
+```
+
+## Tool Discovery
+
+Agents receive tool definitions based on their assigned profile:
+
+```typescript
+import { filterToolsByProfile } from "./tool-profiles.js";
+
+const allTools = await trigger("tools::list");
+const agentTools = filterToolsByProfile(allTools, agent.profile || "full");
+```
+
+Wildcard patterns enable flexible filtering:
+
+- `tool::file_*` matches `tool::file_read`, `tool::file_write`, `tool::file_list`
+- `tool::web_*` matches all web-related tools
+- `tool::*` matches all tools
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="File Operations" icon="folder" href="/tools/file-operations">
+    Learn about file reading, writing, and patching
+  </Card>
+  <Card title="Web Tools" icon="globe" href="/tools/web-tools">
+    Explore web search, fetch, and browser automation
+  </Card>
+  <Card title="Code Tools" icon="code" href="/tools/code-tools">
+    Discover code analysis, formatting, and testing tools
+  </Card>
+  <Card title="Tool Profiles" icon="filter" href="/tools/profiles">
+    Understand how profiles optimize tool availability
+  </Card>
+</CardGroup>

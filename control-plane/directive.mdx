@@ -1,0 +1,414 @@
+---
+title: 'Directive'
+description: 'Hierarchical goal alignment with optimistic concurrency control'
+---
+
+The **Directive** crate manages strategic goals in a hierarchical structure. Directives can be nested (parent/child), versioned for concurrent updates, and filtered by level and status.
+
+## Overview
+
+- **Purpose:** Goal trees with ancestry tracing and CAS updates
+- **LOC:** ~280
+- **Functions:** 5 (create, get, list, update, ancestry)
+- **Endpoints:** 5 REST
+- **Source:** `crates/directive/src/main.rs`
+
+## Core Concepts
+
+### Directive Structure
+
+```rust
+struct Directive {
+    id: String,                    // "dir-{uuid}"
+    realm_id: String,
+    title: String,
+    description: Option<String>,
+    level: String,                 // "realm", "team", "agent"
+    status: DirectiveStatus,       // Active, Paused, Complete, Cancelled
+    parent_id: Option<String>,     // Parent directive
+    owner_agent_id: Option<String>,
+    priority: Option<String>,      // "critical", "high", "normal", "low"
+    version: u32,                  // Optimistic concurrency
+    created_at: String,
+    updated_at: String,
+}
+```
+
+### Directive Hierarchy
+
+```
+Realm: Ship v2.0 (Active)
+├── Team: Build Auth System (Active)
+│   ├── Agent: Implement OAuth2 (Active)
+│   └── Agent: Add MFA Support (Active)
+└── Team: Improve Performance (Paused)
+    └── Agent: Optimize Database Queries (Active)
+```
+
+## Functions
+
+### directive::create
+
+Create a strategic directive.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="title" type="string" required>
+  Directive title
+</ParamField>
+
+<ParamField path="description" type="string">
+  Detailed description
+</ParamField>
+
+<ParamField path="level" type="string" required>
+  Scope level: "realm", "team", or "agent"
+</ParamField>
+
+<ParamField path="parentId" type="string">
+  Parent directive ID for nested goals
+</ParamField>
+
+<ParamField path="ownerAgentId" type="string">
+  Agent responsible for this directive
+</ParamField>
+
+<ParamField path="priority" type="string">
+  Priority: "critical", "high", "normal", "low"
+</ParamField>
+
+**Example:**
+
+```rust
+// Create realm-level directive
+let realm_dir = iii.trigger("directive::create", json!({
+    "realmId": "r-1",
+    "title": "Ship v2.0 by Q2",
+    "description": "Complete v2.0 release with auth and performance improvements",
+    "level": "realm",
+    "priority": "critical"
+})).await?;
+
+let parent_id = realm_dir["id"].as_str().unwrap();
+
+// Create child team-level directive
+let team_dir = iii.trigger("directive::create", json!({
+    "realmId": "r-1",
+    "title": "Build Authentication System",
+    "level": "team",
+    "parentId": parent_id,
+    "ownerAgentId": "agent-lead",
+    "priority": "high"
+})).await?;
+
+// Create agent-level directive
+iii.trigger("directive::create", json!({
+    "realmId": "r-1",
+    "title": "Implement OAuth2 provider",
+    "level": "agent",
+    "parentId": team_dir["id"],
+    "ownerAgentId": "agent-dev-1",
+    "priority": "high"
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+POST /api/directives
+Content-Type: application/json
+
+{
+  "realmId": "r-1",
+  "title": "Ship v2.0",
+  "level": "realm",
+  "priority": "critical"
+}
+```
+
+**Parent Validation (directive/src/main.rs:17-26):**
+
+```rust
+if let Some(ref parent_id) = req.parent_id {
+    let parent = iii
+        .trigger("state::get", json!({ "scope": scope(&req.realm_id), "key": parent_id }))
+        .await
+        .map_err(|e| IIIError::Handler(format!("parent directive not found: {e}")))?;
+
+    if parent.is_null() {
+        return Err(IIIError::Handler(format!("parent directive {parent_id} not found")));
+    }
+}
+```
+
+### directive::get
+
+Retrieve a directive by ID.
+
+```rust
+let directive = iii.trigger("directive::get", json!({
+    "realmId": "r-1",
+    "id": "dir-abc123"
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+GET /api/directives/r-1/dir-abc123
+```
+
+### directive::list
+
+List directives with optional filtering.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="level" type="string">
+  Filter by level: "realm", "team", "agent"
+</ParamField>
+
+<ParamField path="status" type="string">
+  Filter by status: "Active", "Paused", "Complete", "Cancelled"
+</ParamField>
+
+<ParamField path="parentId" type="string">
+  Filter by parent directive
+</ParamField>
+
+**Example:**
+
+```rust
+// Get all active realm-level directives
+let realm_directives = iii.trigger("directive::list", json!({
+    "realmId": "r-1",
+    "level": "realm",
+    "status": "Active"
+})).await?;
+
+// Get all child directives of a parent
+let children = iii.trigger("directive::list", json!({
+    "realmId": "r-1",
+    "parentId": "dir-parent-123"
+})).await?;
+
+// Returns:
+// {
+//   "directives": [ ... ],
+//   "count": 5
+// }
+```
+
+**REST Endpoint:**
+```bash
+GET /api/directives/r-1?level=realm&status=Active
+GET /api/directives/r-1?parentId=dir-parent-123
+```
+
+### directive::update
+
+Update directive with optimistic concurrency control.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="id" type="string" required>
+  Directive ID
+</ParamField>
+
+<ParamField path="title" type="string">
+  New title
+</ParamField>
+
+<ParamField path="description" type="string">
+  New description
+</ParamField>
+
+<ParamField path="status" type="string">
+  New status
+</ParamField>
+
+<ParamField path="priority" type="string">
+  New priority
+</ParamField>
+
+<ParamField path="ownerAgentId" type="string">
+  New owner
+</ParamField>
+
+**Example:**
+
+```rust
+// Mark directive as complete
+let updated = iii.trigger("directive::update", json!({
+    "realmId": "r-1",
+    "id": "dir-abc123",
+    "status": "Complete"
+})).await?;
+
+// Reassign and change priority
+iii.trigger("directive::update", json!({
+    "realmId": "r-1",
+    "id": "dir-abc123",
+    "ownerAgentId": "agent-new-lead",
+    "priority": "critical"
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+PATCH /api/directives/r-1/dir-abc123
+Content-Type: application/json
+
+{
+  "status": "Complete"
+}
+```
+
+**Optimistic Concurrency (directive/src/main.rs:124-137):**
+
+```rust
+let prev_version = d.version;
+d.version = prev_version + 1;
+d.updated_at = chrono::Utc::now().to_rfc3339();
+
+let value = serde_json::to_value(&d).map_err(|e| IIIError::Handler(e.to_string()))?;
+
+iii.trigger("state::set", json!({
+    "scope": scope(realm_id),
+    "key": d.id,
+    "value": value,
+    "expectedVersion": prev_version,  // CAS: only update if version matches
+}))
+.await
+.map_err(|e| IIIError::Handler(e.to_string()))?;
+```
+
+<Note>
+  If two agents try to update the same directive simultaneously, the second update will fail due to version mismatch, preventing lost updates.
+</Note>
+
+### directive::ancestry
+
+Trace directive ancestry to root.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="id" type="string" required>
+  Directive ID to trace
+</ParamField>
+
+**Example:**
+
+```rust
+let ancestry = iii.trigger("directive::ancestry", json!({
+    "realmId": "r-1",
+    "id": "dir-agent-xyz"
+})).await?;
+
+// Returns:
+// {
+//   "ancestry": [
+//     { "id": "dir-agent-xyz", "title": "Implement OAuth2", "level": "agent" },
+//     { "id": "dir-team-abc", "title": "Build Auth", "level": "team" },
+//     { "id": "dir-realm-123", "title": "Ship v2.0", "level": "realm" }
+//   ],
+//   "depth": 3
+// }
+```
+
+**REST Endpoint:**
+```bash
+GET /api/directives/r-1/dir-agent-xyz/ancestry
+```
+
+**Ancestry Algorithm (directive/src/main.rs:142-183):**
+
+```rust
+let mut chain = vec![];
+let mut current = id;
+let mut visited = std::collections::HashSet::new();
+
+loop {
+    if !visited.insert(current) {
+        break;  // Cycle protection
+    }
+    if let Some(d) = map.get(current) {
+        chain.push(serde_json::to_value(*d).unwrap());
+        match &d.parent_id {
+            Some(pid) => current = pid.as_str(),
+            None => break,  // Reached root
+        }
+    } else {
+        break;  // Missing directive
+    }
+}
+```
+
+## Storage
+
+Directive uses scope: `realm:{realmId}:directives`
+
+## Events
+
+Directive publishes to `directive.lifecycle` topic:
+
+```json
+{
+  "type": "created",
+  "directiveId": "dir-abc123",
+  "realmId": "r-1"
+}
+```
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Strategic Alignment" icon="bullseye">
+    Cascade high-level company goals down to team and individual agent tasks.
+  </Card>
+  <Card title="OKR Framework" icon="list-check">
+    Model Objectives (realm) and Key Results (team/agent) as directive hierarchies.
+  </Card>
+  <Card title="Project Planning" icon="diagram-project">
+    Break down epics into stories and tasks using parent/child directives.
+  </Card>
+  <Card title="Priority Management" icon="fire">
+    Track and update priorities across the entire goal hierarchy.
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Use levels consistently">
+    realm = company-wide, team = department/project, agent = individual task
+  </Step>
+  
+  <Step title="Keep hierarchy shallow">
+    Limit to 3-4 levels max for clarity. Too deep = confusing.
+  </Step>
+  
+  <Step title="Set clear ownership">
+    Assign ownerAgentId for accountability. Every directive should have an owner.
+  </Step>
+  
+  <Step title="Complete parent directives last">
+    Mark all children Complete before completing parent for accurate tracking.
+  </Step>
+  
+  <Step title="Use ancestry for context">
+    When an agent works on a directive, show ancestry to provide strategic context.
+  </Step>
+</Steps>
+
+## Related
+
+- [Mission](/control-plane/mission) - Link missions to directives for execution
+- [Hierarchy](/control-plane/hierarchy) - Assign directives based on org structure
+- [Council](/control-plane/council) - Use proposals to create/modify major directives

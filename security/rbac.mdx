@@ -1,0 +1,449 @@
+---
+title: Role-Based Access Control (RBAC)
+description: Per-agent capability enforcement with tool-level granularity and quota management
+---
+
+AgentOS implements fine-grained RBAC that enforces per-agent capabilities at the tool level, with quota enforcement and fail-closed defaults.
+
+## Overview
+
+Every agent in AgentOS has a capability profile that defines:
+
+- **Tools**: Which tools the agent can invoke
+- **Memory Scopes**: Which memory namespaces the agent can access
+- **Network Hosts**: Which external hosts the agent can connect to
+- **Token Quota**: Maximum tokens per hour (0 = unlimited)
+
+<Note>
+By default, agents have **no capabilities**. You must explicitly grant permissions.
+</Note>
+
+## Capability Structure
+
+```typescript
+interface Capability {
+  tools: string[];              // Allowed tools (supports wildcards)
+  memoryScopes: string[];       // Allowed memory namespaces
+  networkHosts: string[];       // Allowed external hosts
+  maxTokensPerHour: number;     // Token quota (0 = unlimited)
+}
+```
+
+## Setting Agent Capabilities
+
+### Via TypeScript
+
+```typescript
+import { trigger } from "iii-sdk";
+
+await trigger("security::set_capabilities", {
+  agentId: "researcher-001",
+  capabilities: {
+    tools: [
+      "tool::web_search",
+      "tool::web_fetch",
+      "tool::file_read",
+      "memory::*",  // All memory tools
+    ],
+    memoryScopes: ["research", "shared"],
+    networkHosts: ["api.example.com", "*.wikipedia.org"],
+    maxTokensPerHour: 100000,  // 100K tokens/hour
+  },
+});
+```
+
+### Via Rust
+
+```rust
+use iii_sdk::iii::III;
+use serde_json::json;
+
+let iii = III::new("ws://localhost:49134");
+
+iii.trigger("security::set_capabilities", json!({
+    "agentId": "coder-001",
+    "capabilities": {
+        "tools": [
+            "tool::file_*",  // All file tools
+            "tool::code_*",  // All code tools
+            "shell::exec",
+        ],
+        "memoryScopes": ["project"],
+        "networkHosts": ["github.com"],
+        "maxTokensPerHour": 500000,
+    }
+})).await?;
+```
+
+## Capability Enforcement
+
+Every tool invocation goes through `security::check_capability` before execution:
+
+```typescript src/security.ts
+registerFunction(
+  { id: "security::check_capability" },
+  async ({ agentId, capability, resource }) => {
+    // Retrieve agent capabilities
+    const caps = await trigger("state::get", {
+      scope: "capabilities",
+      key: agentId,
+    }).catch(() => null);
+
+    // Fail closed: deny if no capabilities defined
+    if (!caps) {
+      triggerVoid("security::audit", {
+        type: "capability_denied",
+        agentId,
+        detail: { resource, reason: "no_capabilities_defined" },
+      });
+      throw new Error(`Agent ${agentId} has no capabilities defined`);
+    }
+
+    // Check tool permission
+    const toolAllowed =
+      caps.tools.includes("*") ||
+      caps.tools.some((t) => resource.startsWith(t));
+
+    if (!toolAllowed) {
+      triggerVoid("security::audit", {
+        type: "capability_denied",
+        agentId,
+        detail: { resource, reason: "tool_not_allowed" },
+      });
+      throw new Error(`Agent ${agentId} denied: ${resource}`);
+    }
+
+    // Enforce token quota
+    if (caps.maxTokensPerHour > 0) {
+      const hourKey = new Date().toISOString().slice(0, 13);
+      const hourUsage = await trigger("state::get", {
+        scope: "metering_hourly",
+        key: `${agentId}:${hourKey}`,
+      }).catch(() => ({ tokens: 0 }));
+
+      if (hourUsage.tokens > caps.maxTokensPerHour) {
+        triggerVoid("security::audit", {
+          type: "quota_exceeded",
+          agentId,
+          detail: { used: hourUsage.tokens, limit: caps.maxTokensPerHour },
+        });
+        throw new Error(`Agent ${agentId} exceeded token quota`);
+      }
+    }
+
+    return { allowed: true };
+  }
+);
+```
+
+## Wildcard Patterns
+
+Capabilities support prefix wildcards for flexible tool grouping:
+
+```typescript
+tools: [
+  "*",                    // All tools (use with caution!)
+  "memory::*",            // All memory operations
+  "tool::file_*",         // All file tools (read, write, list, etc.)
+  "tool::web_search",     // Exact match only
+]
+```
+
+<Warning>
+The `"*"` wildcard grants **all tools**. Only use for fully trusted agents.
+</Warning>
+
+## Token Quota Enforcement
+
+Quotas are enforced per hour using hourly buckets:
+
+```typescript
+const hourKey = new Date().toISOString().slice(0, 13);  // "2026-03-09T14"
+const usageKey = `${agentId}:${hourKey}`;
+
+const hourUsage = await trigger("state::get", {
+  scope: "metering_hourly",
+  key: usageKey,
+}).catch(() => ({ tokens: 0 }));
+
+if (hourUsage.tokens > caps.maxTokensPerHour) {
+  throw new Error(`Agent ${agentId} exceeded token quota`);
+}
+```
+
+<Note>
+Token usage resets every hour. Set `maxTokensPerHour: 0` for unlimited tokens.
+</Note>
+
+## Audit Events
+
+All capability checks generate audit events:
+
+### Successful Access
+
+```json
+{
+  "type": "capabilities_updated",
+  "agentId": "researcher-001",
+  "detail": {
+    "tools": 4
+  },
+  "timestamp": 1709985234567
+}
+```
+
+### Denied Access
+
+```json
+{
+  "type": "capability_denied",
+  "agentId": "researcher-001",
+  "detail": {
+    "resource": "tool::file_write",
+    "reason": "tool_not_allowed"
+  },
+  "timestamp": 1709985234890
+}
+```
+
+### Quota Exceeded
+
+```json
+{
+  "type": "quota_exceeded",
+  "agentId": "coder-001",
+  "detail": {
+    "used": 105000,
+    "limit": 100000,
+    "hourKey": "2026-03-09T14"
+  },
+  "timestamp": 1709985235123
+}
+```
+
+## Rust RBAC Implementation
+
+The Rust security worker provides high-performance capability checking:
+
+```rust crates/security/src/main.rs
+async fn check_capability(iii: &III, input: Value) -> Result<Value, IIIError> {
+    let agent_id = input["agentId"].as_str().unwrap_or("");
+    let resource = input["resource"].as_str().unwrap_or("");
+
+    if agent_id.is_empty() || resource.is_empty() {
+        return Err(IIIError::Handler("agentId and resource required".into()));
+    }
+
+    // Retrieve capabilities
+    let caps: Value = iii
+        .trigger("state::get", json!({
+            "scope": "capabilities",
+            "key": agent_id,
+        }))
+        .await
+        .map_err(|_| IIIError::Handler(
+            format!("Agent {} has no capabilities defined", agent_id)
+        ))?;
+
+    // Extract tool list
+    let tools = caps["tools"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    // Check if resource is allowed
+    let allowed = tools.iter().any(|t| *t == "*" || resource.starts_with(t));
+
+    if !allowed {
+        iii.trigger_void("security::audit", json!({
+            "type": "capability_denied",
+            "agentId": agent_id,
+            "detail": { "resource": resource, "reason": "tool_not_allowed" },
+        }))?;
+        return Err(IIIError::Handler(
+            format!("Agent {} denied: {}", agent_id, resource)
+        ));
+    }
+
+    // Check token quota
+    let max_tokens = caps["max_tokens_per_hour"].as_u64().unwrap_or(0);
+    if max_tokens > 0 {
+        let usage: Value = iii
+            .trigger("state::get", json!({
+                "scope": "metering",
+                "key": agent_id
+            }))
+            .await
+            .unwrap_or(json!({}));
+
+        let used = usage["totalTokens"].as_u64().unwrap_or(0);
+        if used > max_tokens {
+            iii.trigger_void("security::audit", json!({
+                "type": "quota_exceeded",
+                "agentId": agent_id,
+                "detail": { "used": used, "limit": max_tokens },
+            }))?;
+            return Err(IIIError::Handler(
+                format!("Agent {} exceeded token quota", agent_id)
+            ));
+        }
+    }
+
+    Ok(json!({ "allowed": true }))
+}
+```
+
+## Common Capability Profiles
+
+### Research Agent (Read-Only)
+
+```typescript
+{
+  tools: [
+    "tool::web_search",
+    "tool::web_fetch",
+    "tool::file_read",
+    "memory::recall",
+    "memory::store",
+  ],
+  memoryScopes: ["research"],
+  networkHosts: ["*"],
+  maxTokensPerHour: 100000,
+}
+```
+
+### Code Agent (Write Access)
+
+```typescript
+{
+  tools: [
+    "tool::file_*",
+    "tool::code_*",
+    "shell::exec",
+    "memory::*",
+  ],
+  memoryScopes: ["project", "shared"],
+  networkHosts: ["github.com", "gitlab.com"],
+  maxTokensPerHour: 500000,
+}
+```
+
+### Ops Agent (System Access)
+
+```typescript
+{
+  tools: [
+    "shell::exec",
+    "system::*",
+    "tool::file_read",
+    "memory::*",
+  ],
+  memoryScopes: ["ops"],
+  networkHosts: ["*.internal.example.com"],
+  maxTokensPerHour: 0,  // Unlimited
+}
+```
+
+### Restricted Agent (Minimal)
+
+```typescript
+{
+  tools: [
+    "memory::recall",
+  ],
+  memoryScopes: ["sandbox"],
+  networkHosts: [],
+  maxTokensPerHour: 10000,
+}
+```
+
+## CLI Commands
+
+```bash
+# View agent capabilities
+agentos agent capabilities researcher-001
+
+# Set capabilities via config file
+agentos agent set-capabilities researcher-001 --file capabilities.json
+
+# Grant specific tool
+agentos agent grant researcher-001 tool::web_search
+
+# Revoke tool
+agentos agent revoke researcher-001 tool::file_write
+
+# Set token quota
+agentos agent quota researcher-001 100000
+
+# View token usage
+agentos agent usage researcher-001
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Principle of Least Privilege">
+    Only grant the minimum capabilities required for the agent's function.
+  </Step>
+  
+  <Step title="Avoid Wildcards">
+    Use specific tool names instead of `"*"` wildcards when possible.
+  </Step>
+  
+  <Step title="Set Token Quotas">
+    Prevent runaway costs by setting `maxTokensPerHour` limits.
+  </Step>
+  
+  <Step title="Review Audit Logs">
+    Regularly check for `capability_denied` and `quota_exceeded` events.
+  </Step>
+  
+  <Step title="Rotate Capabilities">
+    Periodically review and update agent capabilities as needs change.
+  </Step>
+</Steps>
+
+## Testing RBAC
+
+```typescript
+import { trigger } from "iii-sdk";
+
+// Set restrictive capabilities
+await trigger("security::set_capabilities", {
+  agentId: "test-agent",
+  capabilities: {
+    tools: ["memory::recall"],
+    memoryScopes: ["test"],
+    networkHosts: [],
+    maxTokensPerHour: 1000,
+  },
+});
+
+// This should succeed
+const allowed = await trigger("security::check_capability", {
+  agentId: "test-agent",
+  resource: "memory::recall",
+});
+console.log(allowed);  // { allowed: true }
+
+// This should fail
+try {
+  await trigger("security::check_capability", {
+    agentId: "test-agent",
+    resource: "tool::file_write",
+  });
+} catch (err) {
+  console.log(err.message);  // "Agent test-agent denied: tool::file_write"
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Audit Chain" icon="link" href="/security/audit-chain">
+    Review RBAC events in the immutable audit log
+  </Card>
+  <Card title="Tool Profiles" icon="tools" href="/tools/profiles">
+    Pre-configured tool sets for common agent types
+  </Card>
+</CardGroup>

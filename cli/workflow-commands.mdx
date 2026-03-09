@@ -1,0 +1,512 @@
+---
+title: "Workflow Commands"
+description: "Create and execute multi-step workflows with AgentOS"
+---
+
+Workflow commands enable you to create, manage, and execute multi-step automated workflows that orchestrate multiple agents and tools.
+
+## Overview
+
+Workflows in AgentOS allow you to:
+- Chain multiple agent interactions
+- Execute complex multi-step processes
+- Pass data between steps
+- Handle conditional logic
+- Run parallel operations
+
+## workflow list
+
+List all registered workflows.
+
+```bash
+agentos workflow list
+```
+
+**Example output:**
+```json
+[
+  {
+    "id": "wf-research-and-write",
+    "name": "Research and Write",
+    "steps": 3,
+    "created": "2026-03-09T10:00:00Z",
+    "status": "active"
+  },
+  {
+    "id": "wf-code-review",
+    "name": "Code Review Pipeline",
+    "steps": 5,
+    "created": "2026-03-08T15:30:00Z",
+    "status": "active"
+  }
+]
+```
+
+## workflow create
+
+Create a new workflow from a JSON definition file.
+
+```bash
+agentos workflow create <file>
+```
+
+<ParamField path="file" type="string" required>
+  Path to workflow JSON definition file
+</ParamField>
+
+**Example:**
+```bash
+agentos workflow create workflows/research-pipeline.json
+```
+
+**Output:**
+```
+✓ Created workflow: wf-research-pipeline
+```
+
+## workflow run
+
+Execute a workflow.
+
+```bash
+agentos workflow run <id>
+```
+
+<ParamField path="id" type="string" required>
+  Workflow ID to execute
+</ParamField>
+
+**Example:**
+```bash
+agentos workflow run wf-research-pipeline
+```
+
+**Output:**
+```json
+{
+  "workflowId": "wf-research-pipeline",
+  "executionId": "exec-abc123",
+  "status": "running",
+  "startedAt": "2026-03-09T10:30:00Z",
+  "steps": [
+    {
+      "id": "step-1",
+      "name": "Research",
+      "status": "completed",
+      "output": "..."
+    },
+    {
+      "id": "step-2",
+      "name": "Analyze",
+      "status": "running"
+    }
+  ]
+}
+```
+
+## Workflow Definition Format
+
+Workflows are defined in JSON with the following structure:
+
+### Basic Workflow
+
+```json
+{
+  "id": "wf-example",
+  "name": "Example Workflow",
+  "description": "A simple example workflow",
+  "steps": [
+    {
+      "id": "step-1",
+      "type": "agent",
+      "agentId": "researcher",
+      "input": "Research topic: AI agents"
+    },
+    {
+      "id": "step-2",
+      "type": "agent",
+      "agentId": "writer",
+      "input": "Write summary based on: ${steps['step-1'].output}"
+    }
+  ]
+}
+```
+
+### Step Types
+
+Workflows support 5 step modes:
+
+<AccordionGroup>
+  <Accordion title="agent - Invoke an agent">
+    ```json
+    {
+      "type": "agent",
+      "agentId": "coder",
+      "input": "Write a function to parse JSON"
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="tool - Execute a tool directly">
+    ```json
+    {
+      "type": "tool",
+      "toolId": "web_search",
+      "args": {
+        "query": "latest AI news"
+      }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="function - Call a registered function">
+    ```json
+    {
+      "type": "function",
+      "functionId": "data::transform",
+      "args": {
+        "data": "${steps['step-1'].output}"
+      }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="parallel - Run steps concurrently">
+    ```json
+    {
+      "type": "parallel",
+      "steps": [
+        {
+          "type": "agent",
+          "agentId": "researcher-1",
+          "input": "Research topic A"
+        },
+        {
+          "type": "agent",
+          "agentId": "researcher-2",
+          "input": "Research topic B"
+        }
+      ]
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="conditional - Branch based on conditions">
+    ```json
+    {
+      "type": "conditional",
+      "condition": "${steps['step-1'].output.sentiment} == 'positive'",
+      "then": {
+        "type": "agent",
+        "agentId": "writer",
+        "input": "Write positive response"
+      },
+      "else": {
+        "type": "agent",
+        "agentId": "support",
+        "input": "Handle concern"
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Variable Interpolation
+
+Workflows support variable interpolation using `${}` syntax:
+
+```json
+{
+  "steps": [
+    {
+      "id": "research",
+      "type": "agent",
+      "agentId": "researcher",
+      "input": "Research: ${input.topic}"
+    },
+    {
+      "id": "write",
+      "type": "agent",
+      "agentId": "writer",
+      "input": "Write article about ${steps['research'].output}"
+    }
+  ]
+}
+```
+
+**Available variables:**
+- `${input.*}` - Workflow input parameters
+- `${steps['step-id'].output}` - Output from a specific step
+- `${steps[0].output}` - Output from step by index
+- `${env.KEY}` - Environment variables
+
+## Example Workflows
+
+<CodeGroup>
+```json Research Pipeline
+{
+  "id": "wf-research-pipeline",
+  "name": "Research and Summarize",
+  "steps": [
+    {
+      "id": "search",
+      "type": "tool",
+      "toolId": "web_search",
+      "args": {
+        "query": "${input.query}"
+      }
+    },
+    {
+      "id": "research",
+      "type": "agent",
+      "agentId": "researcher",
+      "input": "Analyze these search results: ${steps['search'].output}"
+    },
+    {
+      "id": "summarize",
+      "type": "agent",
+      "agentId": "writer",
+      "input": "Write a summary: ${steps['research'].output}"
+    }
+  ]
+}
+```
+
+```json Code Review
+{
+  "id": "wf-code-review",
+  "name": "Automated Code Review",
+  "steps": [
+    {
+      "id": "read",
+      "type": "tool",
+      "toolId": "file_read",
+      "args": {
+        "path": "${input.file}"
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "agent",
+      "agentId": "code-reviewer",
+      "input": "Review this code: ${steps['read'].output}"
+    },
+    {
+      "id": "security",
+      "type": "function",
+      "functionId": "security::scan",
+      "args": {
+        "code": "${steps['read'].output}"
+      }
+    },
+    {
+      "id": "report",
+      "type": "agent",
+      "agentId": "writer",
+      "input": "Generate report from ${steps['analyze'].output} and ${steps['security'].output}"
+    }
+  ]
+}
+```
+
+```json Parallel Research
+{
+  "id": "wf-parallel-research",
+  "name": "Multi-source Research",
+  "steps": [
+    {
+      "id": "parallel-search",
+      "type": "parallel",
+      "steps": [
+        {
+          "id": "tech-news",
+          "type": "agent",
+          "agentId": "researcher",
+          "input": "Research tech news about ${input.topic}"
+        },
+        {
+          "id": "academic",
+          "type": "agent",
+          "agentId": "researcher",
+          "input": "Find academic papers about ${input.topic}"
+        },
+        {
+          "id": "social",
+          "type": "agent",
+          "agentId": "researcher",
+          "input": "Analyze social media for ${input.topic}"
+        }
+      ]
+    },
+    {
+      "id": "synthesize",
+      "type": "agent",
+      "agentId": "analyst",
+      "input": "Synthesize findings from all sources: ${steps['parallel-search'].output}"
+    }
+  ]
+}
+```
+
+```json Content Pipeline
+{
+  "id": "wf-content-pipeline",
+  "name": "Content Creation Pipeline",
+  "steps": [
+    {
+      "id": "research",
+      "type": "agent",
+      "agentId": "researcher",
+      "input": "Research: ${input.topic}"
+    },
+    {
+      "id": "draft",
+      "type": "agent",
+      "agentId": "writer",
+      "input": "Write draft based on: ${steps['research'].output}"
+    },
+    {
+      "id": "review",
+      "type": "agent",
+      "agentId": "editor",
+      "input": "Review and improve: ${steps['draft'].output}"
+    },
+    {
+      "id": "image-prompt",
+      "type": "agent",
+      "agentId": "image-prompt-engineer",
+      "input": "Generate image prompt for: ${steps['review'].output}"
+    },
+    {
+      "id": "save",
+      "type": "tool",
+      "toolId": "file_write",
+      "args": {
+        "path": "output/${input.topic}.md",
+        "content": "${steps['review'].output}"
+      }
+    }
+  ]
+}
+```
+</CodeGroup>
+
+## Advanced Features
+
+### Error Handling
+
+Add error handling to steps:
+
+```json
+{
+  "id": "risky-step",
+  "type": "agent",
+  "agentId": "coder",
+  "input": "Execute task",
+  "onError": {
+    "type": "agent",
+    "agentId": "debugger",
+    "input": "Debug error: ${error.message}"
+  }
+}
+```
+
+### Retries
+
+Configure retry behavior:
+
+```json
+{
+  "id": "api-call",
+  "type": "tool",
+  "toolId": "web_fetch",
+  "args": { "url": "https://api.example.com" },
+  "retry": {
+    "maxAttempts": 3,
+    "backoff": "exponential"
+  }
+}
+```
+
+### Timeouts
+
+Set step timeouts:
+
+```json
+{
+  "id": "long-task",
+  "type": "agent",
+  "agentId": "researcher",
+  "input": "Deep research",
+  "timeout": 300000
+}
+```
+
+## Workflow Execution
+
+Monitor workflow execution:
+
+```bash
+# Start workflow
+agentos workflow run wf-research-pipeline
+
+# Check status via API or TUI
+agentos tui  # Press 7 for Workflows screen
+```
+
+Workflows execute asynchronously. Use the TUI or API to monitor progress.
+
+## Trigger Integration
+
+Workflows can be triggered by:
+- CLI command (`workflow run`)
+- Cron schedule ([cron commands](/cli/security-commands#cron-commands))
+- HTTP API endpoint
+- Agent delegation
+- Event triggers
+
+**Example cron trigger:**
+```bash
+agentos cron create "0 9 * * 1" "workflow::run" --args '{"workflowId": "wf-weekly-report"}'
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Keep steps atomic">
+    Each step should perform a single, well-defined task. This makes workflows easier to debug and reuse.
+  </Accordion>
+  
+  <Accordion title="Use descriptive IDs">
+    Use clear, descriptive step IDs like `research-tech-news` instead of `step-1`.
+  </Accordion>
+  
+  <Accordion title="Handle errors gracefully">
+    Always include error handling for steps that might fail (API calls, file operations).
+  </Accordion>
+  
+  <Accordion title="Leverage parallel execution">
+    Use parallel steps for independent operations to reduce total execution time.
+  </Accordion>
+  
+  <Accordion title="Version your workflows">
+    Store workflow definitions in version control and include version numbers in IDs.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agent Commands" icon="robot" href="/cli/agent-commands">
+    Learn about the agents used in workflows
+  </Card>
+  <Card title="Trigger Commands" icon="bolt" href="/cli/config-commands">
+    Set up automated workflow triggers
+  </Card>
+  <Card title="Security" icon="shield" href="/cli/security-commands">
+    Configure approval gates for workflows
+  </Card>
+  <Card title="Cron Jobs" icon="clock" href="/cli/security-commands#cron-commands">
+    Schedule recurring workflow execution
+  </Card>
+</CardGroup>

@@ -1,0 +1,434 @@
+---
+title: SkillKit Integration
+description: Access 15,000+ skills from the SkillKit marketplace to extend agent capabilities
+---
+
+# SkillKit Integration
+
+AgentOS integrates with [SkillKit](https://agenstskills.com), a marketplace of 15,000+ pre-built skills that extend agent capabilities. Skills are discoverable, installable, and executable functions that agents can use during task execution.
+
+## Overview
+
+Implemented in `src/skillkit-bridge.ts:1`, the SkillKit integration provides:
+
+- **Skill search** - Find skills by keywords, tags, or description
+- **Skill installation** - Install skills from the marketplace
+- **Skill listing** - View installed skills
+- **AI-powered recommendations** - Get skill suggestions based on context
+- **Local skill scanning** - Discover skills in your workspace
+
+## What is a Skill?
+
+A skill is a packaged function that:
+- Solves a specific problem (e.g., "parse CSV", "send email", "analyze sentiment")
+- Has a clear interface (inputs and outputs)
+- Can be discovered via metadata (name, description, tags)
+- Executes in a sandboxed environment
+
+## Searching the Marketplace
+
+<Steps>
+  <Step title="Search by keyword">
+    ```typescript
+    import { trigger } from "iii-sdk";
+
+    const { results } = await trigger("skillkit::search", {
+      query: "code review",
+      limit: 10
+    });
+
+    console.log(results);
+    // [
+    //   {
+    //     id: "code-review-pro",
+    //     name: "Code Review Pro",
+    //     description: "Advanced code review with security scanning",
+    //     author: "skillkit",
+    //     downloads: 12453,
+    //     rating: 4.8,
+    //     tags: ["code", "security", "review"]
+    //   },
+    //   // ... more results
+    // ]
+    ```
+
+    From `src/skillkit-bridge.ts:52-76`, this:
+    - Validates the query (min 2 characters)
+    - Runs `npx skillkit search <query> --json`
+    - Returns parsed JSON results
+  </Step>
+
+  <Step title="Filter and select">
+    ```typescript
+    // Find skills with high ratings
+    const topSkills = results
+      .filter(s => s.rating >= 4.5)
+      .sort((a, b) => b.downloads - a.downloads)
+      .slice(0, 3);
+
+    console.log("Top skills:", topSkills.map(s => s.name));
+    ```
+  </Step>
+</Steps>
+
+## Installing Skills
+
+```typescript
+const { installed, result } = await trigger("skillkit::install", {
+  id: "code-review-pro",
+  agent: "code-agent"  // Optional: install for specific agent
+});
+
+if (installed) {
+  console.log("Skill installed:", result);
+} else {
+  console.error("Installation failed:", result.error);
+}
+```
+
+From `src/skillkit-bridge.ts:79-108`, this:
+- Validates the skill ID format (prevents path traversal)
+- Validates the agent name if provided
+- Runs `npx skillkit install <id> --json [--agent <name>]`
+- Times out after 60 seconds
+- Returns installation status
+
+## Listing Installed Skills
+
+```typescript
+const { skills } = await trigger("skillkit::list", {});
+
+console.log(`${skills.length} skills installed:`);
+for (const skill of skills) {
+  console.log(`- ${skill.name} (v${skill.version})`);
+}
+```
+
+From `src/skillkit-bridge.ts:110-129`, this runs `npx skillkit list --json`.
+
+## AI-Powered Recommendations
+
+Get skill suggestions based on your current task:
+
+```typescript
+const { recommendations } = await trigger("skillkit::recommend", {
+  context: "I need to analyze customer feedback from CSV files and generate sentiment reports"
+});
+
+console.log("Recommended skills:");
+for (const skill of recommendations) {
+  console.log(`- ${skill.name}: ${skill.description}`);
+  console.log(`  Relevance: ${skill.relevanceScore}/10`);
+}
+```
+
+From `src/skillkit-bridge.ts:131-153`, SkillKit uses AI to match your context with relevant skills in the marketplace.
+
+## Scanning for Local Skills
+
+Discover skills defined in your workspace:
+
+```typescript
+const { found, count, root } = await trigger("skillkit::scan", {
+  path: "./projects"  // Optional: defaults to workspace root
+});
+
+console.log(`Found ${count} skills in ${root}:`);
+for (const item of found) {
+  if (item.type === "skill") {
+    console.log(`- SKILL.md: ${item.path}`);
+    console.log(item.content?.slice(0, 200));
+  } else if (item.type === "well-known") {
+    console.log(`- .well-known file: ${item.path}`);
+  }
+}
+```
+
+From `src/skillkit-bridge.ts:155-222`, the scanner:
+- Recursively searches directories (max depth 3)
+- Finds `SKILL.md` files (skill definitions)
+- Finds `.well-known/` directories (discovery documents)
+- Returns up to 50 results
+- Skips `node_modules` and hidden directories
+
+## Skill Definition Format
+
+Skills are defined in `SKILL.md` files:
+
+```markdown
+# Code Review Pro
+
+Advanced code review with security scanning and performance analysis.
+
+## Inputs
+
+- `code` (string, required): Source code to review
+- `language` (string, optional): Programming language
+- `checks` (array, optional): Specific checks to run
+
+## Outputs
+
+- `issues` (array): List of found issues
+- `score` (number): Overall code quality score (0-100)
+- `recommendations` (array): Improvement suggestions
+
+## Example
+
+```typescript
+const result = await runSkill("code-review-pro", {
+  code: "function add(a, b) { return a + b; }",
+  language: "javascript",
+  checks: ["security", "performance", "style"]
+});
+```
+
+## Tags
+
+code, security, review, static-analysis
+```
+
+## Real-World Example: Content Pipeline
+
+```typescript
+// 1. Search for skills
+const contentSkills = await trigger("skillkit::search", {
+  query: "content generation writing seo",
+  limit: 20
+});
+
+// 2. Install the best-rated skills
+const toInstall = contentSkills.results
+  .filter(s => s.rating >= 4.5 && s.downloads > 1000)
+  .slice(0, 5);
+
+for (const skill of toInstall) {
+  const { installed } = await trigger("skillkit::install", {
+    id: skill.id,
+    agent: "content-creator"
+  });
+  
+  if (installed) {
+    console.log(`✓ Installed ${skill.name}`);
+  }
+}
+
+// 3. List installed skills
+const { skills } = await trigger("skillkit::list", {});
+console.log(`Content pipeline has ${skills.length} skills`);
+
+// 4. Get recommendations for optimization
+const { recommendations } = await trigger("skillkit::recommend", {
+  context: "Optimize blog posts for SEO and readability"
+});
+
+console.log("Suggested additions:");
+for (const rec of recommendations.slice(0, 3)) {
+  console.log(`- ${rec.name}`);
+}
+```
+
+## CLI Commands
+
+From the README (`workspace/source/README.md:311-315`):
+
+```bash
+agentos skill list                  # List installed skills
+agentos skill install <path>        # Install skill from path or marketplace
+agentos skill remove <id>           # Remove installed skill
+agentos skill search <query>        # Search marketplace
+agentos skill create <name>         # Scaffold new skill
+```
+
+## HTTP API Endpoints
+
+```bash
+# Search marketplace
+curl "http://localhost:3111/api/skillkit/search?query=data+analysis&limit=10"
+
+# Install skill
+curl -X POST http://localhost:3111/api/skillkit/install \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "csv-parser-pro",
+    "agent": "data-analyst"
+  }'
+
+# List installed
+curl http://localhost:3111/api/skillkit/list
+
+# Get recommendations
+curl "http://localhost:3111/api/skillkit/recommend?context=analyze+customer+sentiment"
+
+# Scan workspace
+curl "http://localhost:3111/api/skillkit/scan?path=./projects"
+```
+
+## SkillKit Bridge Implementation
+
+From `src/skillkit-bridge.ts:27-50`, the bridge runs SkillKit commands safely:
+
+```typescript
+async function runSkillkit(
+  args: string[],
+  timeoutMs = 30_000
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      "npx",
+      ["skillkit", ...args],
+      {
+        timeout: timeoutMs,
+        maxBuffer: 1024 * 1024,  // 1MB stdout
+        env: SAFE_ENV,           // Stripped environment
+        cwd: WORKSPACE_ROOT
+      }
+    );
+    return { stdout, stderr, exitCode: 0 };
+  } catch (err: any) {
+    return {
+      stdout: (err.stdout || "").slice(0, 100_000),
+      stderr: (err.stderr || err.message || "").slice(0, 50_000),
+      exitCode: err.code || 1
+    };
+  }
+}
+```
+
+Key security features:
+- Stripped environment variables (only PATH, HOME, USER, etc.)
+- Timeouts on all operations
+- Output size limits
+- Runs in workspace root
+- No shell execution (uses `execFile`)
+
+## Security Considerations
+
+<AccordionGroup>
+  <Accordion title="Skill ID Validation">
+    From `src/skillkit-bridge.ts:86-88`, skill IDs are validated with regex to prevent path traversal:
+    ```typescript
+    if (!/^[\w\-@/.]{1,256}$/.test(id)) {
+      throw new Error("Invalid skill ID format");
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Agent Name Validation">
+    Agent names are also validated (max 64 chars, alphanumeric + dash/underscore).
+  </Accordion>
+
+  <Accordion title="Sandboxed Execution">
+    Skills run in isolated environments with limited access to system resources.
+  </Accordion>
+
+  <Accordion title="Marketplace Verification">
+    SkillKit verifies skill authors and scans for malicious code before publishing.
+  </Accordion>
+</AccordionGroup>
+
+## Skill Categories
+
+The marketplace includes skills across many domains:
+
+<CardGroup cols={3}>
+  <Card title="Data Processing" icon="table">
+    CSV parsing, JSON manipulation, data transformation
+  </Card>
+  <Card title="Code Analysis" icon="code">
+    Linting, security scanning, complexity analysis
+  </Card>
+  <Card title="Content Generation" icon="pen-to-square">
+    Writing, summarization, translation
+  </Card>
+  <Card title="Web Scraping" icon="spider">
+    HTML parsing, API clients, data extraction
+  </Card>
+  <Card title="Image Processing" icon="image">
+    Resizing, OCR, format conversion
+  </Card>
+  <Card title="Communication" icon="paper-plane">
+    Email, SMS, notifications
+  </Card>
+  <Card title="Database" icon="database">
+    Query builders, migrations, ORM helpers
+  </Card>
+  <Card title="Testing" icon="flask">
+    Test generation, mocking, fixtures
+  </Card>
+  <Card title="DevOps" icon="gear">
+    Deployment, monitoring, CI/CD integration
+  </Card>
+</CardGroup>
+
+## Skill vs. Tool vs. MCP
+
+When should you use each?
+
+| Feature | Built-in Tools | Skills | MCP |
+|---------|---------------|--------|-----|
+| **Discovery** | Hardcoded | Marketplace | Server-specific |
+| **Installation** | Pre-installed | `skillkit install` | `mcp::connect` |
+| **Scope** | Core operations | Specialized tasks | External services |
+| **Count** | ~60 | 15,000+ | 25+ integrations |
+| **Example** | `file_read` | `csv-parser-pro` | GitHub API |
+
+**Use built-in tools** for core operations (files, web, memory).  
+**Use skills** for specialized tasks (parsing, analysis, generation).  
+**Use MCP** for external service integration (GitHub, Slack, AWS).
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Search before building">
+    Check the marketplace before implementing custom logic. There's likely a skill for it.
+  </Accordion>
+
+  <Accordion title="Install per-agent">
+    Use the `agent` parameter to scope skills to specific agents, reducing context overhead.
+  </Accordion>
+
+  <Accordion title="Use recommendations">
+    Let SkillKit AI suggest relevant skills based on your task description.
+  </Accordion>
+
+  <Accordion title="Version skills">
+    Track skill versions and update regularly to get bug fixes and new features.
+  </Accordion>
+
+  <Accordion title="Scan local projects">
+    Use `skillkit::scan` to discover custom skills in your workspace.
+  </Accordion>
+</AccordionGroup>
+
+## Creating Your Own Skills
+
+Use the CLI to scaffold a new skill:
+
+```bash
+agentos skill create my-custom-skill
+```
+
+This generates a `SKILL.md` template with:
+- Skill metadata (name, description, tags)
+- Input/output schema
+- Example usage
+- Implementation scaffold
+
+Submit to the marketplace for others to use!
+
+## Limits
+
+From the implementation:
+
+- **Search limit**: 50 results max
+- **Query min length**: 2 characters
+- **Installation timeout**: 60 seconds
+- **Scan depth**: 3 levels
+- **Scan max results**: 50 files
+- **Command timeout**: 30 seconds (search/list)
+
+## Related Features
+
+- [Tools](/core-concepts/tools) - Built-in AgentOS tools
+- [MCP Integration](/advanced/mcp-integration) - External service integration
+- [A2A Protocol](/advanced/a2a-protocol) - Advertise skills in AgentCard

@@ -1,0 +1,482 @@
+---
+title: "llm-router"
+description: "Intelligent LLM routing, provider management, and completion handling"
+---
+
+The `llm-router` crate provides dynamic model selection based on task complexity, multi-provider LLM integration, and usage tracking across 10+ providers.
+
+## llm::route
+
+Route to optimal model based on message complexity and tool requirements.
+
+<ParamField path="messages" type="array">
+  Array of message objects (analyzes last message for complexity)
+</ParamField>
+
+<ParamField path="tools" type="array">
+  Array of available tool definitions
+</ParamField>
+
+<ParamField path="model" type="string">
+  Optional preferred model name (e.g., "opus", "sonnet", "haiku", "gpt-4o", "gemini")
+</ParamField>
+
+<ResponseField name="provider" type="string">
+  Selected provider name (e.g., "anthropic", "openai", "google")
+</ResponseField>
+
+<ResponseField name="model" type="string">
+  Selected model identifier
+</ResponseField>
+
+<ResponseField name="complexity" type="number">
+  Computed complexity score
+</ResponseField>
+
+<CodeGroup>
+
+```rust Route Model
+use iii_sdk::iii::III;
+use serde_json::json;
+
+let iii = III::new("ws://localhost:49134");
+
+let route = iii.trigger("llm::route", json!({
+    "messages": [
+        {"role": "user", "content": "Analyze this complex system design and compare alternatives"}
+    ],
+    "tools": [
+        {"id": "file::read", "description": "Read file contents"},
+        {"id": "memory::recall", "description": "Search memories"}
+    ],
+    "model": null  // Auto-select based on complexity
+})).await?;
+
+println!("Routed to {} / {} (complexity: {})",
+    route["provider"].as_str().unwrap(),
+    route["model"].as_str().unwrap(),
+    route["complexity"].as_u64().unwrap()
+);
+```
+
+```typescript TypeScript SDK
+const route = await iii.trigger('llm::route', {
+  messages: [
+    {role: 'user', content: 'Analyze this complex system design and compare alternatives'}
+  ],
+  tools: [
+    {id: 'file::read', description: 'Read file contents'},
+    {id: 'memory::recall', description: 'Search memories'}
+  ]
+});
+
+console.log(`Routed to ${route.provider} / ${route.model} (complexity: ${route.complexity})`);
+```
+
+</CodeGroup>
+
+### Complexity Scoring
+
+The router computes complexity based on:
+
+- **Content Length**: +1 per 100 characters
+- **Code Indicators**: +20 if contains ` ``` `, `function`, or `class`
+- **Analysis Keywords**: +15 if contains `analyze`, `compare`, or `design`
+- **Tool Count**: +5 per tool
+- **Conversation Length**: +10 if > 10 messages
+
+### Model Selection by Complexity
+
+| Complexity Score | Selected Model |
+|-----------------|----------------|
+| 0-10 | claude-haiku-4-5-20251001 |
+| 11-40 | claude-sonnet-4-20250514 |
+| 41+ | claude-opus-4-20250514 |
+
+### Preferred Model Overrides
+
+Specify `model` parameter to override auto-selection:
+
+- `"opus"` or `"claude-opus"` → claude-opus-4-20250514
+- `"sonnet"` or `"claude-sonnet"` → claude-sonnet-4-20250514
+- `"haiku"` or `"claude-haiku"` → claude-haiku-4-5-20251001
+- `"gpt-4o"` → gpt-4o (OpenAI)
+- `"gemini"` → gemini-2.0-flash (Google)
+
+---
+
+## llm::complete
+
+Send completion request to routed provider with tool support.
+
+<ParamField path="provider" type="string" required>
+  Provider name (from llm::route or manual selection)
+</ParamField>
+
+<ParamField path="model" type="string" required>
+  Model identifier to use
+</ParamField>
+
+<ParamField path="messages" type="array" required>
+  Conversation history with role/content pairs
+</ParamField>
+
+<ParamField path="tools" type="array">
+  Available tools for function calling
+</ParamField>
+
+<ParamField path="max_tokens" type="number" default={4096}>
+  Maximum tokens to generate
+</ParamField>
+
+<ResponseField name="content" type="string">
+  Generated text content
+</ResponseField>
+
+<ResponseField name="model" type="string">
+  Model used for completion
+</ResponseField>
+
+<ResponseField name="toolCalls" type="array">
+  Array of tool calls requested by model
+</ResponseField>
+
+<ResponseField name="usage" type="object">
+  Token usage statistics
+  
+  <ResponseField name="input" type="number">
+    Input tokens consumed
+  </ResponseField>
+  
+  <ResponseField name="output" type="number">
+    Output tokens generated
+  </ResponseField>
+  
+  <ResponseField name="total" type="number">
+    Total tokens (input + output)
+  </ResponseField>
+</ResponseField>
+
+<CodeGroup>
+
+```rust Complete Request
+let completion = iii.trigger("llm::complete", json!({
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "messages": [
+        {"role": "user", "content": "Write a haiku about Rust programming"}
+    ],
+    "tools": [],
+    "max_tokens": 2048
+})).await?;
+
+println!("Response: {}", completion["content"].as_str().unwrap());
+println!("Tokens: {}", completion["usage"]["total"].as_u64().unwrap());
+```
+
+```typescript TypeScript
+const completion = await iii.trigger('llm::complete', {
+  provider: 'anthropic',
+  model: 'claude-sonnet-4-20250514',
+  messages: [
+    {role: 'user', content: 'Write a haiku about Rust programming'}
+  ],
+  tools: [],
+  max_tokens: 2048
+});
+
+console.log('Response:', completion.content);
+console.log('Tokens:', completion.usage.total);
+```
+
+</CodeGroup>
+
+### Usage Tracking
+
+The router automatically tracks token usage per provider:model combination:
+- Increments `input_tokens`, `output_tokens`, and `requests` counters
+- Stored in-memory using DashMap for thread-safe access
+- Query via `llm::usage` function
+
+### Provider Drivers
+
+Supports multiple driver types:
+
+- **Anthropic**: Native Anthropic Messages API
+- **OpenAiCompat**: OpenAI-compatible endpoints (OpenAI, Groq, DeepSeek, Mistral, etc.)
+- **Gemini**: Google Generative Language API
+- **Bedrock**: AWS Bedrock (future support)
+
+---
+
+## llm::usage
+
+Get aggregated usage statistics across all providers and models.
+
+<ResponseField name="stats" type="array">
+  Array of usage stat objects
+  
+  <ResponseField name="provider" type="string">
+    Provider name
+  </ResponseField>
+  
+  <ResponseField name="model" type="string">
+    Model identifier
+  </ResponseField>
+  
+  <ResponseField name="input_tokens" type="number">
+    Total input tokens consumed
+  </ResponseField>
+  
+  <ResponseField name="output_tokens" type="number">
+    Total output tokens generated
+  </ResponseField>
+  
+  <ResponseField name="requests" type="number">
+    Total number of requests
+  </ResponseField>
+</ResponseField>
+
+```rust Get Usage Stats
+let usage = iii.trigger("llm::usage", json!({})).await?;
+
+for stat in usage["stats"].as_array().unwrap() {
+    println!("{}/{}: {} requests, {} total tokens",
+        stat["provider"].as_str().unwrap(),
+        stat["model"].as_str().unwrap(),
+        stat["requests"].as_u64().unwrap(),
+        stat["input_tokens"].as_u64().unwrap() + stat["output_tokens"].as_u64().unwrap()
+    );
+}
+```
+
+---
+
+## llm::providers
+
+List all available providers with configuration status.
+
+<ResponseField name="providers" type="array">
+  Array of provider configuration objects
+  
+  <ResponseField name="name" type="string">
+    Provider name
+  </ResponseField>
+  
+  <ResponseField name="base_url" type="string">
+    API base URL
+  </ResponseField>
+  
+  <ResponseField name="env_key" type="string">
+    Environment variable name for API key
+  </ResponseField>
+  
+  <ResponseField name="models" type="array">
+    Array of supported model identifiers
+  </ResponseField>
+  
+  <ResponseField name="configured" type="boolean">
+    True if API key is set or provider requires no key (e.g., Ollama)
+  </ResponseField>
+</ResponseField>
+
+```rust List Providers
+let providers = iii.trigger("llm::providers", json!({})).await?;
+
+for provider in providers["providers"].as_array().unwrap() {
+    let name = provider["name"].as_str().unwrap();
+    let configured = provider["configured"].as_bool().unwrap();
+    let models = provider["models"].as_array().unwrap();
+    
+    println!("{} {} - {} models",
+        if configured { "✓" } else { "✗" },
+        name,
+        models.len()
+    );
+}
+```
+
+---
+
+## Supported Providers
+
+The router supports 10 providers out of the box:
+
+<CardGroup cols={2}>
+
+<Card title="Anthropic" icon="robot">
+**Base URL**: https://api.anthropic.com  
+**Env Key**: ANTHROPIC_API_KEY  
+**Models**: claude-opus-4, claude-sonnet-4, claude-haiku-4-5
+</Card>
+
+<Card title="OpenAI" icon="brain">
+**Base URL**: https://api.openai.com/v1  
+**Env Key**: OPENAI_API_KEY  
+**Models**: gpt-4o, gpt-4o-mini, o1, o3-mini
+</Card>
+
+<Card title="Google" icon="google">
+**Base URL**: https://generativelanguage.googleapis.com/v1beta  
+**Env Key**: GOOGLE_API_KEY  
+**Models**: gemini-2.0-flash, gemini-2.0-pro
+</Card>
+
+<Card title="Groq" icon="bolt">
+**Base URL**: https://api.groq.com/openai/v1  
+**Env Key**: GROQ_API_KEY  
+**Models**: llama-3.3-70b-versatile, mixtral-8x7b-32768
+</Card>
+
+<Card title="DeepSeek" icon="magnifying-glass">
+**Base URL**: https://api.deepseek.com/v1  
+**Env Key**: DEEPSEEK_API_KEY  
+**Models**: deepseek-chat, deepseek-reasoner
+</Card>
+
+<Card title="Together" icon="users">
+**Base URL**: https://api.together.xyz/v1  
+**Env Key**: TOGETHER_API_KEY  
+**Models**: Llama-3.3-70B, Mixtral-8x22B
+</Card>
+
+<Card title="Mistral" icon="wind">
+**Base URL**: https://api.mistral.ai/v1  
+**Env Key**: MISTRAL_API_KEY  
+**Models**: mistral-large-latest, mistral-small-latest
+</Card>
+
+<Card title="Fireworks" icon="fire">
+**Base URL**: https://api.fireworks.ai/inference/v1  
+**Env Key**: FIREWORKS_API_KEY  
+**Models**: llama-v3p3-70b-instruct
+</Card>
+
+<Card title="OpenRouter" icon="route">
+**Base URL**: https://openrouter.ai/api/v1  
+**Env Key**: OPENROUTER_API_KEY  
+**Models**: anthropic/claude-opus-4, google/gemini-2.0-flash, etc.
+</Card>
+
+<Card title="Ollama" icon="house">
+**Base URL**: http://localhost:11434/v1  
+**Env Key**: (none - local)  
+**Models**: llama3.3, qwen2.5, deepseek-r1
+</Card>
+
+</CardGroup>
+
+---
+
+## Provider Configuration
+
+### Environment Variables
+
+Set API keys via environment variables:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
+export GOOGLE_API_KEY="AIza..."
+export GROQ_API_KEY="gsk_..."
+export DEEPSEEK_API_KEY="sk-..."
+export TOGETHER_API_KEY="..."
+export MISTRAL_API_KEY="..."
+export FIREWORKS_API_KEY="..."
+export OPENROUTER_API_KEY="sk-or-v1-..."
+```
+
+### Local Models (Ollama)
+
+Ollama requires no API key and runs locally:
+
+```bash
+# Install Ollama: https://ollama.com
+ollama pull llama3.3
+ollama pull deepseek-r1
+
+# Router automatically uses localhost:11434
+```
+
+---
+
+## Driver Implementation
+
+### Anthropic Driver
+
+Uses native Anthropic Messages API:
+- Header: `x-api-key: {api_key}`
+- Header: `anthropic-version: 2023-06-01`
+- POST to `/v1/messages`
+- Supports tool use blocks in response
+
+### OpenAI-Compatible Driver
+
+Works with OpenAI-compatible endpoints:
+- Header: `authorization: Bearer {api_key}` (if key provided)
+- POST to `/chat/completions`
+- Supports tool_calls in response
+- Used by: OpenAI, Groq, DeepSeek, Together, Mistral, Fireworks, OpenRouter, Ollama
+
+---
+
+## Response Normalization
+
+The router normalizes responses from different providers:
+
+- **Content extraction**:
+  - Anthropic: `content[0].text`
+  - OpenAI: `choices[0].message.content`
+
+- **Tool calls extraction**:
+  - Anthropic: filters `content` blocks with `type: "tool_use"`
+  - OpenAI: `choices[0].message.tool_calls`
+
+- **Token usage**:
+  - Anthropic: `usage.{input_tokens, output_tokens}`
+  - OpenAI: `usage.{prompt_tokens, completion_tokens}`
+
+---
+
+## Example: Complete Workflow
+
+```rust
+use iii_sdk::iii::III;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let iii = III::new("ws://localhost:49134");
+
+    // Step 1: Route to optimal model
+    let route = iii.trigger("llm::route", json!({
+        "messages": [{"role": "user", "content": "Explain quantum entanglement"}],
+        "tools": []
+    })).await?;
+
+    // Step 2: Request completion
+    let completion = iii.trigger("llm::complete", json!({
+        "provider": route["provider"],
+        "model": route["model"],
+        "messages": [{"role": "user", "content": "Explain quantum entanglement"}],
+        "tools": [],
+        "max_tokens": 2048
+    })).await?;
+
+    println!("Response: {}", completion["content"].as_str().unwrap());
+    println!("Tokens: {}", completion["usage"]["total"].as_u64().unwrap());
+
+    // Step 3: Check usage stats
+    let usage = iii.trigger("llm::usage", json!({})).await?;
+    println!("\nTotal usage across all providers:");
+    for stat in usage["stats"].as_array().unwrap() {
+        println!("  {}/{}: {} requests",
+            stat["provider"].as_str().unwrap(),
+            stat["model"].as_str().unwrap(),
+            stat["requests"].as_u64().unwrap()
+        );
+    }
+
+    Ok(())
+}
+```

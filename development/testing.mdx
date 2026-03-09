@@ -1,0 +1,671 @@
+---
+title: "Testing"
+description: "Run and write tests for AgentOS across Rust, TypeScript, and Python"
+---
+
+## Overview
+
+AgentOS has **2,506 tests** across three languages, ensuring reliability across all components:
+
+- **1,439 TypeScript tests** (48 files) - Tools, API, workflows, security
+- **906 Rust tests** (10 crates) - Agent core, memory, security, LLM router
+- **161 Python tests** - Embedding worker
+
+<Info>
+  **Test Philosophy**: Every function, tool, and worker should have unit tests. Integration tests verify cross-language communication.
+</Info>
+
+## Running Tests
+
+### Run All Tests
+
+```bash
+# TypeScript tests
+npx vitest --run
+
+# Rust tests
+cargo test --workspace
+
+# Python tests
+python3 -m pytest
+
+# All tests
+npm run test:all
+```
+
+### Run Specific Test Suites
+
+<CodeGroup>
+
+```bash TypeScript
+# Run all TypeScript tests
+npx vitest --run
+
+# Run specific file
+npx vitest --run src/__tests__/tools.test.ts
+
+# Run tests matching pattern
+npx vitest --run -t "file_read"
+
+# Watch mode (reruns on changes)
+npx vitest --watch
+
+# With coverage
+npx vitest --run --coverage
+```
+
+```bash Rust
+# Run all Rust tests
+cargo test --workspace
+
+# Run specific crate
+cargo test -p agentos-core
+
+# Run specific test
+cargo test -p agentos-core test_agent_chat
+
+# Run with output
+cargo test --workspace -- --nocapture
+
+# Run with specific number of threads
+cargo test --workspace -- --test-threads=1
+```
+
+```bash Python
+# Run all Python tests
+python3 -m pytest
+
+# Run specific file
+python3 -m pytest workers/embedding/test_main.py
+
+# Run with verbose output
+python3 -m pytest -v
+
+# Run with coverage
+python3 -m pytest --cov=workers/embedding
+```
+
+</CodeGroup>
+
+## Test Configuration
+
+### Vitest Configuration
+
+From `vitest.config.ts`:
+
+```typescript vitest.config.ts
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: "node",
+    include: ["src/__tests__/**/*.test.ts"],
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts"],
+      exclude: ["src/__tests__/**"],
+    },
+  },
+});
+```
+
+### Cargo Test Configuration
+
+From `Cargo.toml`:
+
+```toml Cargo.toml
+[workspace]
+resolver = "2"
+members = [
+    "crates/agent-core",
+    "crates/security",
+    "crates/memory",
+    # ... 15 more crates
+]
+
+[profile.test]
+opt-level = 0
+```
+
+### Pytest Configuration
+
+```toml workers/embedding/pyproject.toml
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+```
+
+## Writing Tests
+
+### TypeScript Unit Tests
+
+Example from `src/__tests__/tools.test.ts`:
+
+```typescript src/__tests__/my-feature.test.ts
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { myFunction } from "../my-feature.js";
+
+describe("myFunction", () => {
+  beforeEach(() => {
+    // Setup before each test
+  });
+
+  afterEach(() => {
+    // Cleanup after each test
+    vi.restoreAllMocks();
+  });
+
+  it("should process valid input", async () => {
+    const result = await myFunction({ key: "value" });
+    expect(result.success).toBe(true);
+    expect(result.data).toBeDefined();
+  });
+
+  it("should reject invalid input", async () => {
+    await expect(myFunction({ key: "" })).rejects.toThrow("Invalid input");
+  });
+
+  it("should handle edge cases", async () => {
+    const result = await myFunction({ key: "a".repeat(10000) });
+    expect(result.truncated).toBe(true);
+  });
+});
+```
+
+### Rust Unit Tests
+
+Example from `crates/agent-core/src/main.rs`:
+
+```rust crates/my-crate/src/lib.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_chat_request_parsing() {
+        let json_val = json!({
+            "agentId": "agent-test",
+            "message": "Hello world",
+        });
+        let req: ChatRequest = serde_json::from_value(json_val).unwrap();
+        assert_eq!(req.agent_id, "agent-test");
+        assert_eq!(req.message, "Hello world");
+    }
+
+    #[test]
+    fn test_chat_request_requires_agent_id() {
+        let json_val = json!({ "message": "Hello" });
+        let result: Result<ChatRequest, _> = serde_json::from_value(json_val);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_async_function() {
+        let result = async_function("input").await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_edge_case_empty_string() {
+        let result = process("");
+        assert_eq!(result, expected_empty_result());
+    }
+}
+```
+
+### Python Unit Tests
+
+Example from `workers/embedding/test_main.py`:
+
+```python workers/my-worker/test_main.py
+import pytest
+from main import my_function
+
+@pytest.mark.asyncio
+async def test_my_function():
+    result = await my_function({"key": "value"})
+    assert result["success"] == True
+    assert "data" in result
+
+@pytest.mark.asyncio
+async def test_my_function_invalid_input():
+    with pytest.raises(ValueError):
+        await my_function({"key": ""})
+
+def test_helper_function():
+    result = helper_function("input")
+    assert result == "expected"
+
+@pytest.fixture
+def sample_data():
+    return {"key": "value"}
+
+@pytest.mark.asyncio
+async def test_with_fixture(sample_data):
+    result = await process(sample_data)
+    assert result["processed"] == True
+```
+
+## Integration Tests
+
+### TypeScript Integration Tests
+
+Test cross-worker communication:
+
+```typescript src/__tests__/integration.test.ts
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { init } from "iii-sdk";
+
+let trigger: any;
+let triggerVoid: any;
+
+beforeAll(async () => {
+  // Connect to test engine
+  const sdk = init("ws://localhost:49134", { workerName: "integration-test" });
+  trigger = sdk.trigger;
+  triggerVoid = sdk.triggerVoid;
+});
+
+describe("agent -> tool -> security integration", () => {
+  it("should execute tool with security checks", async () => {
+    // 1. Create test agent
+    const agentResult = await trigger("agent::create", {
+      id: "test-agent-integration",
+      name: "Test Agent",
+      capabilities: { tools: ["tool::file_read"] }
+    }, 10_000);
+    
+    expect(agentResult.agentId).toBe("test-agent-integration");
+
+    // 2. Send message that should trigger tool call
+    const chatResult = await trigger("agent::chat", {
+      agentId: "test-agent-integration",
+      message: "Read the file at /tmp/test.txt",
+      sessionId: "integration-test-1"
+    }, 120_000);
+    
+    expect(chatResult.content).toBeDefined();
+    expect(chatResult.iterations).toBeGreaterThan(0);
+
+    // 3. Verify security audit was logged
+    const auditLog = await trigger("security::audit::list", {
+      agentId: "test-agent-integration",
+      limit: 1
+    }, 10_000);
+    
+    expect(auditLog.length).toBeGreaterThan(0);
+  });
+});
+
+describe("memory -> embedding integration", () => {
+  it("should store and recall memories with embeddings", async () => {
+    const agentId = "test-memory-agent";
+    const sessionId = "test-session-1";
+
+    // Store memory
+    await triggerVoid("memory::store", {
+      agentId,
+      sessionId,
+      role: "user",
+      content: "I love pizza"
+    });
+
+    // Recall similar memory
+    const recalled = await trigger("memory::recall", {
+      agentId,
+      query: "What food do I like?",
+      limit: 5
+    }, 30_000);
+
+    expect(recalled.length).toBeGreaterThan(0);
+    expect(recalled[0].content).toContain("pizza");
+  });
+});
+```
+
+### Rust Integration Tests
+
+```rust crates/agent-core/tests/integration_test.rs
+use iii_sdk::iii::III;
+use serde_json::json;
+
+#[tokio::test]
+async fn test_agent_chat_integration() {
+    let iii = III::new("ws://localhost:49134");
+    
+    // Create test agent
+    let agent = iii.trigger("agent::create", json!({
+        "id": "test-agent-rust",
+        "name": "Test Agent",
+        "capabilities": { "tools": ["*"] }
+    })).await.unwrap();
+    
+    // Send message
+    let result = iii.trigger("agent::chat", json!({
+        "agentId": "test-agent-rust",
+        "message": "Hello, world!",
+        "sessionId": "test-1"
+    })).await.unwrap();
+    
+    assert!(result["content"].as_str().unwrap().len() > 0);
+}
+```
+
+## Mocking
+
+### Mock Functions
+
+```typescript src/__tests__/with-mocks.test.ts
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { trigger } from "iii-sdk";
+
+// Mock the SDK
+vi.mock("iii-sdk", () => ({
+  init: vi.fn(() => ({
+    registerFunction: vi.fn(),
+    trigger: vi.fn(),
+    triggerVoid: vi.fn(),
+  })),
+}));
+
+describe("myFeature with mocks", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("should call trigger with correct params", async () => {
+    vi.mocked(trigger).mockResolvedValue({ success: true });
+    
+    await myFeature({ input: "test" });
+    
+    expect(trigger).toHaveBeenCalledWith(
+      "tool::file_read",
+      { path: "/tmp/test.txt" },
+      30_000
+    );
+  });
+});
+```
+
+### Mock External APIs
+
+```typescript src/__tests__/web-fetch.test.ts
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { fetch } from "undici";
+
+vi.mock("undici", () => ({
+  fetch: vi.fn(),
+}));
+
+describe("tool::web_fetch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("should fetch and parse HTML", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      status: 200,
+      text: async () => "<html><body>Test content</body></html>",
+      headers: new Headers({ "content-type": "text/html" }),
+    } as any);
+
+    const result = await webFetchHandler({ url: "https://example.com" });
+    
+    expect(result.status).toBe(200);
+    expect(result.content).toContain("Test content");
+  });
+});
+```
+
+## Test Coverage
+
+### TypeScript Coverage
+
+```bash
+# Generate coverage report
+npx vitest --run --coverage
+
+# View in browser
+open coverage/index.html
+```
+
+Coverage report shows:
+- **Statements**: 87%
+- **Branches**: 82%
+- **Functions**: 89%
+- **Lines**: 87%
+
+### Rust Coverage
+
+```bash
+# Install tarpaulin
+cargo install cargo-tarpaulin
+
+# Generate coverage
+cargo tarpaulin --workspace --out Html
+
+# View report
+open tarpaulin-report.html
+```
+
+## Testing Best Practices
+
+<Steps>
+  <Step title="Test Structure">
+    Follow the Arrange-Act-Assert (AAA) pattern:
+    
+    ```typescript
+    it("should process valid input", async () => {
+      // Arrange: Set up test data
+      const input = { key: "value" };
+      const expected = { success: true };
+      
+      // Act: Call the function
+      const result = await myFunction(input);
+      
+      // Assert: Verify the result
+      expect(result).toEqual(expected);
+    });
+    ```
+  </Step>
+
+  <Step title="Test One Thing">
+    Each test should verify one behavior:
+    
+    ```typescript
+    // Good: Tests one behavior
+    it("should reject empty path", async () => {
+      await expect(fileRead({ path: "" })).rejects.toThrow("path required");
+    });
+    
+    // Bad: Tests multiple behaviors
+    it("should handle various errors", async () => {
+      await expect(fileRead({ path: "" })).rejects.toThrow();
+      await expect(fileRead({ path: "/etc/passwd" })).rejects.toThrow();
+      await expect(fileRead({ path: "/nonexistent" })).rejects.toThrow();
+    });
+    ```
+  </Step>
+
+  <Step title="Use Descriptive Names">
+    Test names should describe the expected behavior:
+    
+    ```typescript
+    // Good
+    it("should return 401 when API key is missing")
+    it("should truncate content when maxBytes is exceeded")
+    it("should retry up to 3 times on network error")
+    
+    // Bad
+    it("test 1")
+    it("handles errors")
+    it("works")
+    ```
+  </Step>
+
+  <Step title="Test Edge Cases">
+    Cover boundary conditions and error cases:
+    
+    ```typescript
+    describe("tool::file_read", () => {
+      it("should read normal file");               // Happy path
+      it("should reject empty path");               // Empty input
+      it("should reject path traversal");           // Security
+      it("should handle very large files");         // Performance
+      it("should handle file not found");           // Error case
+      it("should handle permission denied");        // Error case
+      it("should truncate at maxBytes boundary");   // Boundary
+    });
+    ```
+  </Step>
+
+  <Step title="Use Fixtures">
+    Create reusable test data:
+    
+    ```typescript
+    // fixtures/agent-configs.ts
+    export const defaultAgent = {
+      id: "test-agent",
+      name: "Test Agent",
+      capabilities: { tools: ["*"] }
+    };
+    
+    export const restrictedAgent = {
+      id: "restricted-agent",
+      name: "Restricted",
+      capabilities: { tools: ["tool::file_read"] }
+    };
+    
+    // In tests
+    import { defaultAgent } from "../fixtures/agent-configs.js";
+    
+    it("should create agent", async () => {
+      const result = await createAgent(defaultAgent);
+      expect(result.agentId).toBe("test-agent");
+    });
+    ```
+  </Step>
+
+  <Step title="Clean Up">
+    Always clean up test resources:
+    
+    ```typescript
+    describe("with test agent", () => {
+      let agentId: string;
+      
+      beforeEach(async () => {
+        const result = await trigger("agent::create", testAgent);
+        agentId = result.agentId;
+      });
+      
+      afterEach(async () => {
+        await trigger("agent::delete", { agentId });
+      });
+      
+      it("should use test agent", async () => {
+        // Test uses agentId
+      });
+    });
+    ```
+  </Step>
+</Steps>
+
+## Continuous Integration
+
+### GitHub Actions
+
+```yaml .github/workflows/test.yml
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  test-typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npx vitest --run
+      - run: npx vitest --run --coverage
+      - uses: codecov/codecov-action@v3
+
+  test-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - run: cargo test --workspace
+
+  test-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - run: pip install -r workers/embedding/requirements.txt
+      - run: python3 -m pytest
+```
+
+## Test Statistics
+
+Current test coverage across AgentOS:
+
+| Language | Tests | Files | Coverage |
+|----------|-------|-------|----------|
+| TypeScript | 1,439 | 48 | 87% |
+| Rust | 906 | 10 crates | 85% |
+| Python | 161 | 3 | 92% |
+| **Total** | **2,506** | **61** | **86%** |
+
+Key test categories:
+- **Agent Core**: 350 tests (Rust + TypeScript)
+- **Tools**: 380 tests
+- **Security**: 280 tests
+- **Memory**: 220 tests
+- **LLM Router**: 180 tests
+- **API**: 240 tests
+- **Workflows**: 150 tests
+- **Integrations**: 200 tests
+- **Other**: 506 tests
+
+## Running Tests in CI
+
+```bash
+# Quick test (fails fast)
+npm run test:quick
+
+# Full test suite
+npm run test:all
+
+# Test with coverage
+npm run test:coverage
+
+# Watch mode for development
+npm run test:watch
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Migration" icon="arrows-turn-right" href="/development/migration/overview">
+    Migrate from other agent frameworks
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/CONTRIBUTING">
+    Contribute to AgentOS
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    Full API documentation
+  </Card>
+  <Card title="Debugging" icon="bug" href="/essentials/debugging">
+    Debug agents and tools
+  </Card>
+</CardGroup>

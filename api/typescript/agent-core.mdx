@@ -1,0 +1,297 @@
+---
+title: 'Agent Core API'
+description: 'Core agent loop functions for processing messages and managing agent lifecycle in TypeScript'
+---
+
+## Overview
+
+The Agent Core module provides the central agent loop functionality, handling message processing, tool execution, and agent lifecycle management. It orchestrates LLM calls, tool invocations, and context management.
+
+## Main Functions
+
+### agent::chat
+
+Process a message through the complete agent loop with validation, security checks, tool execution, and response generation.
+
+<ParamField path="input" type="ChatRequest" required>
+  The chat request object containing:
+  
+  <ParamField path="agentId" type="string" required>
+    The unique identifier of the agent
+  </ParamField>
+  
+  <ParamField path="message" type="string" required>
+    The user message to process
+  </ParamField>
+  
+  <ParamField path="sessionId" type="string">
+    Optional session identifier for conversation continuity
+  </ParamField>
+  
+  <ParamField path="systemPrompt" type="string">
+    Optional system prompt override
+  </ParamField>
+</ParamField>
+
+<ResponseField name="ChatResponse" type="object">
+  <ResponseField name="content" type="string">
+    The agent's response content
+  </ResponseField>
+  
+  <ResponseField name="model" type="string">
+    The model used for generation
+  </ResponseField>
+  
+  <ResponseField name="usage" type="object">
+    Token usage statistics (input, output, cacheRead, cacheWrite)
+  </ResponseField>
+  
+  <ResponseField name="iterations" type="number">
+    Number of tool execution iterations performed
+  </ResponseField>
+</ResponseField>
+
+#### Process Flow
+
+The agent::chat function executes the following steps:
+
+1. **Request Validation** - Validates agentId and checks rate limits
+2. **Concurrent Slot Acquisition** - Ensures agent doesn't exceed concurrent request limits
+3. **Context Preparation** - Loads agent config, recalls memories, and prepares tools
+4. **Security Scanning** - Scans for injection attacks (blocks if riskScore > 0.5)
+5. **Budget Checking** - Verifies agent hasn't exceeded token/cost budgets
+6. **LLM Execution** - Calls the LLM with messages and available tools
+7. **Tool Loop** - Executes tool calls iteratively (max 50 iterations)
+8. **Response Recording** - Stores conversation in memory and updates metrics
+
+<CodeGroup>
+```typescript Example Usage
+import { trigger } from 'iii-sdk';
+
+const response = await trigger('agent::chat', {
+  agentId: 'agent-123',
+  message: 'What files are in the workspace?',
+  sessionId: 'session-abc'
+});
+
+console.log(response.content);
+console.log(`Used ${response.iterations} tool iterations`);
+```
+
+```typescript Response Example
+{
+  content: "I found 3 files in the workspace: config.ts, index.ts, and utils.ts",
+  model: "claude-3-5-sonnet-20241022",
+  usage: {
+    input: 1250,
+    output: 340,
+    cacheRead: 0,
+    cacheWrite: 1200
+  },
+  iterations: 2
+}
+```
+</CodeGroup>
+
+#### Constants
+
+- **MAX_ITERATIONS**: 50 - Maximum tool execution iterations
+- **TOOL_TIMEOUT_MS**: 120,000 - Tool execution timeout (2 minutes)
+- **MAX_CHAT_TIMEOUT_MS**: 300,000 - Overall chat timeout (5 minutes)
+- **CONTEXT_HEALTH_CHECK_INTERVAL**: 10 - Check context health every N iterations
+- **CONTEXT_HEALTH_THRESHOLD**: 60 - Compress context if health score < threshold
+
+---
+
+### agent::list_tools
+
+List all tools available to a specific agent based on its capabilities and tool profile.
+
+<ParamField path="agentId" type="string" required>
+  The agent identifier to list tools for
+</ParamField>
+
+<ResponseField name="tools" type="array">
+  Array of tool definitions with function_id, description, and metadata
+</ResponseField>
+
+<CodeGroup>
+```typescript Example
+const tools = await trigger('agent::list_tools', {
+  agentId: 'agent-123'
+});
+
+console.log(`Agent has access to ${tools.length} tools`);
+```
+</CodeGroup>
+
+---
+
+### agent::create
+
+Register a new agent with configuration and capabilities.
+
+<ParamField path="config" type="AgentConfig" required>
+  <ParamField path="id" type="string">
+    Optional agent ID (auto-generated if not provided)
+  </ParamField>
+  
+  <ParamField path="name" type="string">
+    Agent name
+  </ParamField>
+  
+  <ParamField path="systemPrompt" type="string">
+    Default system prompt for the agent
+  </ParamField>
+  
+  <ParamField path="capabilities" type="object">
+    <ParamField path="tools" type="string[]">
+      Allowed tool prefixes (e.g., ["tool::", "agent::"] or ["*"] for all)
+    </ParamField>
+  </ParamField>
+  
+  <ParamField path="toolProfile" type="string">
+    Tool filtering profile: "full", "minimal", or custom
+  </ParamField>
+  
+  <ParamField path="codeAgentMode" type="boolean">
+    Enable automatic code detection and execution
+  </ParamField>
+</ParamField>
+
+<ResponseField name="agentId" type="string">
+  The created agent's unique identifier
+</ResponseField>
+
+<CodeGroup>
+```typescript Create Agent
+const { agentId } = await trigger('agent::create', {
+  name: 'Code Assistant',
+  systemPrompt: 'You are a helpful coding assistant.',
+  capabilities: {
+    tools: ['tool::file_read', 'tool::file_write', 'tool::shell_exec']
+  },
+  toolProfile: 'full',
+  codeAgentMode: true
+});
+
+console.log(`Created agent: ${agentId}`);
+```
+</CodeGroup>
+
+---
+
+### agent::list
+
+List all registered agents.
+
+<ResponseField name="agents" type="array">
+  Array of agent configurations
+</ResponseField>
+
+---
+
+### agent::delete
+
+Remove an agent from the system.
+
+<ParamField path="agentId" type="string" required>
+  The agent identifier to delete
+</ParamField>
+
+<ResponseField name="deleted" type="boolean">
+  Confirmation of deletion
+</ResponseField>
+
+---
+
+### agent::list_by_division
+
+List agents filtered by division (organizational grouping).
+
+<ParamField path="division" type="Division">
+  Optional division filter (e.g., "engineering", "support")
+</ParamField>
+
+<ResponseField name="agents" type="array">
+  Filtered array of agents
+</ResponseField>
+
+---
+
+## Internal Functions
+
+These functions are used internally by the agent loop:
+
+### validateRequest
+
+Validates the chat request, checks rate limits, and acquires concurrent execution slots.
+
+**Location**: `agent-core.ts:43`
+
+### prepareContext
+
+Prepares the execution context by loading agent config, recalling memories, listing tools, routing to appropriate model, and scanning for security threats.
+
+**Location**: `agent-core.ts:95`
+
+### executeLlmCall
+
+Executes a single LLM completion call with the current messages and tools, recording replay events and tracking token costs.
+
+**Location**: `agent-core.ts:162`
+
+### executeToolCall
+
+Executes a single tool call with comprehensive security checks including guard policies, approval requirements, capability verification, and policy enforcement.
+
+**Location**: `agent-core.ts:291`
+
+**Security Checks Performed**:
+1. Tool allowlist verification
+2. Guard circuit breaker check
+3. Approval tier decision (sync/async)
+4. Policy enforcement
+5. Capability verification
+
+### toolLoop
+
+Executes the iterative tool calling loop, handling multiple rounds of tool execution until the agent produces a final response or reaches MAX_ITERATIONS.
+
+**Location**: `agent-core.ts:484`
+
+**Features**:
+- Automatic context health monitoring
+- Context compression when health degrades
+- Audit logging for each iteration
+- Tool result injection into message history
+
+### handleCodeAgent
+
+Detects and executes code blocks when codeAgentMode is enabled, automatically running code and feeding results back into the conversation.
+
+**Location**: `agent-core.ts:213`
+
+---
+
+## Configuration
+
+The agent core connects to the engine via the `ENGINE_URL` environment variable and registers as the "agent-core" worker.
+
+## Hooks and Events
+
+The agent loop fires several hooks that can be listened to:
+
+- **BeforeToolCall** - Fired before each tool execution
+- **AfterToolCall** - Fired after successful tool execution
+- **AgentLoopEnd** - Fired when the agent loop completes
+
+## Metrics
+
+The agent core records the following metrics:
+
+- `active_sessions` - Current active chat sessions (gauge)
+- `tokens_used_total` - Total tokens consumed (input/output)
+- `tool_execution_total` - Tool execution counts by status
+- `function_call_duration_ms` - Call duration histogram
+- `function_error_total` - Error counts by type

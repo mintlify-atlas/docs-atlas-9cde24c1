@@ -1,0 +1,725 @@
+---
+title: "Migrating from OpenClaw"
+description: "Step-by-step guide to migrate from OpenClaw to AgentOS"
+---
+
+## Overview
+
+AgentOS provides comprehensive migration from OpenClaw configurations. The migration tool reads your OpenClaw JSON5 config and converts agents, channels, models, tools, cron jobs, skills, and sessions to AgentOS format.
+
+<Info>
+  **Config Detection**: The migration scanner looks for OpenClaw configs in standard locations: `~/.openclaw/`, `~/.clawdbot/`, `~/.moldbot/`, `~/.moltbot/`
+</Info>
+
+## What Gets Migrated
+
+| OpenClaw Component | AgentOS Equivalent | Completeness |
+|--------------------|-------------------|-------------|
+| **Agents** | `agents/*/agent.toml` | 95% |
+| **Channels** | `config/channels/*.toml` | 90% |
+| **Models** | Agent model config | 100% |
+| **Tools** | `integrations/*.toml` | 85% |
+| **Cron Jobs** | `hands/*/HAND.toml` | 90% |
+| **Skills** | `skills/*/SKILL.md` | 80% |
+| **Sessions** | `data/sessions/*.json` | 100% |
+
+## Quick Migration
+
+<Steps>
+  <Step title="Locate Config">
+    Find your OpenClaw configuration:
+    
+    ```bash
+    # Standard locations
+    ls ~/.openclaw/openclaw.json
+    ls ~/.openclaw/config.json5
+    ls ~/.clawdbot/config.json
+    ls ~/.moldbot/config.json
+    ls ~/.moltbot/config.json
+    ```
+  </Step>
+
+  <Step title="Scan for OpenClaw">
+    ```bash
+    agentos migrate scan
+    ```
+    
+    Output:
+    ```json
+    {
+      "frameworks": [
+        {
+          "framework": "openclaw",
+          "detected": true,
+          "configPath": "~/.openclaw/openclaw.json",
+          "version": "2.3.1",
+          "migratable": true
+        }
+      ]
+    }
+    ```
+  </Step>
+
+  <Step title="Preview Migration">
+    ```bash
+    agentos migrate openclaw --dry-run
+    ```
+    
+    Shows what will be migrated without making changes.
+  </Step>
+
+  <Step title="Execute Migration">
+    ```bash
+    agentos migrate openclaw
+    ```
+    
+    Creates:
+    - `agents/*/agent.toml` - Agent configurations
+    - `config/channels/*.toml` - Channel configurations
+    - `config/models/*.toml` - Model configurations
+    - `integrations/*.toml` - Tool integrations
+    - `hands/*/HAND.toml` - Cron jobs as hands
+    - `skills/*/SKILL.md` - Skill files
+    - `data/sessions/*.json` - Session history
+    - `data/migrations/openclaw-{timestamp}.json` - Migration report
+  </Step>
+
+  <Step title="Review & Test">
+    ```bash
+    # View migration report
+    agentos migrate report
+    
+    # List migrated agents
+    agentos agent list | grep openclaw
+    
+    # Test agent
+    agentos chat my-agent
+    ```
+  </Step>
+</Steps>
+
+## OpenClaw Config Format
+
+### Example OpenClaw Config
+
+```json5 ~/.openclaw/openclaw.json
+{
+  // Project metadata
+  name: "my-project",
+  version: "1.0.0",
+  
+  // Agents
+  agents: {
+    "researcher": {
+      model: "claude-sonnet",
+      system_prompt: "You are a research assistant. Find and summarize information.",
+      instructions: "Always cite sources. Use web search for recent information.",
+      tools: ["web_search", "file_read", "memory"],
+      capabilities: ["read", "search"],
+      temperature: 0.3
+    },
+    "coder": {
+      model: "gpt-4",
+      system_prompt: "You are a senior software engineer.",
+      tools: ["file_read", "file_write", "shell", "code_interpreter"],
+      temperature: 0.7
+    }
+  },
+  
+  // Communication channels
+  channels: {
+    "slack": {
+      type: "slack",
+      webhook: "https://hooks.slack.com/services/...",
+      token: "xoxb-..."
+    },
+    "discord": {
+      type: "discord",
+      webhook: "https://discord.com/api/webhooks/..."
+    }
+  },
+  
+  // Model configurations
+  models: {
+    "fast": {
+      provider: "anthropic",
+      model: "claude-haiku",
+      temperature: 0.5
+    },
+    "smart": {
+      provider: "openai",
+      model: "gpt-4o",
+      temperature: 0.3
+    }
+  },
+  
+  // Custom tools
+  tools: {
+    "database_query": {
+      command: "python",
+      args: ["-m", "tools.database"],
+      description: "Query the database"
+    }
+  },
+  
+  // Cron jobs
+  cron: {
+    "daily_report": {
+      schedule: "0 9 * * *",  // Every day at 9 AM
+      agent: "reporter",
+      task: "Generate daily metrics report and post to Slack",
+      enabled: true
+    },
+    "weekly_summary": {
+      schedule: "0 17 * * 5",  // Every Friday at 5 PM
+      agent: "analyst",
+      task: "Create weekly summary",
+      enabled: true
+    }
+  },
+  
+  // Skills
+  skills: {
+    "code_review": {
+      path: "./skills/code_review.md",
+      enabled: true,
+      version: "1.2.0"
+    }
+  },
+  
+  // Session history
+  sessions: {
+    "session-1": {
+      agent: "researcher",
+      history: [
+        { role: "user", content: "Tell me about quantum computing" },
+        { role: "assistant", content: "Quantum computing is..." }
+      ],
+      created: "2025-03-01T10:00:00Z"
+    }
+  }
+}
+```
+
+## Migration Examples
+
+### Example 1: Agent Migration
+
+<Tabs>
+  <Tab title="Before (OpenClaw)">
+    ```json5
+    {
+      "agents": {
+        "researcher": {
+          "model": "claude-sonnet",
+          "system_prompt": "You are a research assistant.",
+          "tools": ["web_search", "file_read", "memory"],
+          "temperature": 0.3
+        }
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="After (AgentOS)">
+    ```toml agents/researcher/agent.toml
+    [agent]
+    name = "researcher"
+    description = "Migrated from OpenClaw (~/.openclaw/openclaw.json)"
+    module = "builtin:chat"
+
+    [agent.model]
+    provider = "anthropic"
+    model = "claude-sonnet-4-6"
+    max_tokens = 4096
+
+    [agent.capabilities]
+    tools = ["tool::web_search", "tool::file_read", "memory::*"]
+    memory_scopes = ["self.*", "shared.*"]
+    network_hosts = ["*"]
+
+    [agent.resources]
+    max_tokens_per_hour = 500000
+
+    system_prompt = """
+    You are a research assistant.
+    """
+
+    tags = ["migrated", "openclaw"]
+    ```
+  </Tab>
+</Tabs>
+
+### Example 2: Channel Migration
+
+<Tabs>
+  <Tab title="Before (OpenClaw)">
+    ```json5
+    {
+      "channels": {
+        "slack": {
+          "type": "slack",
+          "webhook": "https://hooks.slack.com/services/T00/B00/XXX",
+          "token": "xoxb-123-456-abc"
+        }
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="After (AgentOS)">
+    ```toml config/channels/slack.toml
+    [channel]
+    id = "slack"
+    type = "slack"
+    webhook = "https://hooks.slack.com/services/T00/B00/XXX"
+    token = "xoxb-123-456-abc"
+    ```
+  </Tab>
+</Tabs>
+
+### Example 3: Tool Migration
+
+<Tabs>
+  <Tab title="Before (OpenClaw)">
+    ```json5
+    {
+      "tools": {
+        "database_query": {
+          "command": "python",
+          "args": ["-m", "tools.database"],
+          "description": "Query the database"
+        }
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="After (AgentOS)">
+    ```toml integrations/database_query.toml
+    [integration]
+    id = "database_query"
+    name = "database_query"
+    description = "Migrated from OpenClaw"
+    category = "migrated"
+    transport = "stdio"
+    command = "python"
+    args = ["-m", "tools.database"]
+
+    [integration.env]
+
+    [integration.oauth]
+    enabled = false
+    ```
+  </Tab>
+</Tabs>
+
+### Example 4: Cron Job Migration
+
+<Tabs>
+  <Tab title="Before (OpenClaw)">
+    ```json5
+    {
+      "cron": {
+        "daily_report": {
+          "schedule": "0 9 * * *",
+          "agent": "reporter",
+          "task": "Generate daily metrics report",
+          "enabled": true
+        }
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="After (AgentOS)">
+    ```toml hands/daily_report/HAND.toml
+    [hand]
+    id = "daily_report"
+    name = "daily_report"
+    description = "Migrated cron from OpenClaw: Generate daily metrics report"
+    enabled = true
+    schedule = "0 9 * * *"
+
+    [hand.tools]
+    allowed = ["tool::*"]
+
+    [hand.agent]
+    max_iterations = 40
+    temperature = 0.3
+    system_prompt = """Execute the following task: Generate daily metrics report"""
+    ```
+  </Tab>
+</Tabs>
+
+## Tool Mapping
+
+OpenClaw tools are automatically mapped to AgentOS equivalents:
+
+```python
+# Web tools
+web_search        → tool::web_search
+google_search     → tool::web_search
+bing_search       → tool::web_search
+brave_search      → tool::web_search
+web_fetch         → tool::web_fetch
+scrape            → tool::web_fetch
+wikipedia         → tool::web_fetch
+
+# File tools
+file_read         → tool::file_read
+read_file         → tool::file_read
+file_write        → tool::file_write
+write_file        → tool::file_write
+
+# Shell tools
+shell             → tool::shell_exec
+terminal          → tool::shell_exec
+python_repl       → tool::shell_exec
+code_interpreter  → tool::shell_exec
+
+# Browser tools
+browser           → tool::browser_navigate
+
+# Math tools
+calculator        → tool::calculate
+
+# Memory tools
+memory            → memory::store, memory::recall
+retriever         → memory::query
+
+# Custom tools    → integrations/{name}.toml
+```
+
+## Model Mapping
+
+OpenClaw model names are mapped to AgentOS models:
+
+| OpenClaw Model | AgentOS Model |
+|----------------|---------------|
+| `gpt-4`, `gpt-4o` | `claude-sonnet-4-6` |
+| `gpt-4o-mini`, `gpt-3.5-turbo` | `claude-haiku-3.5` |
+| `claude-opus`, `claude-3-opus` | `claude-opus-4` |
+| `claude-sonnet`, `claude-3-sonnet` | `claude-sonnet-4-6` |
+| `claude-haiku`, `claude-3-haiku` | `claude-haiku-3.5` |
+| `gemini-pro` | `claude-sonnet-4-6` |
+| `llama-3` | `llama-3.3-70b` |
+| `mixtral` | `mixtral-8x7b` |
+
+## Post-Migration Steps
+
+<Steps>
+  <Step title="Review Migration Report">
+    ```bash
+    agentos migrate report
+    ```
+    
+    Look for:
+    - **Migrated**: Successfully converted items
+    - **Skipped**: Items that couldn't be auto-migrated (need manual review)
+    - **Errors**: Failed migrations (need fixing)
+  </Step>
+
+  <Step title="Customize System Prompts">
+    OpenClaw `system_prompt` and `instructions` are merged. Review and refine:
+    
+    ```bash
+    # Review all agents
+    for agent in agents/*/agent.toml; do
+      echo "=== $agent ==="
+      grep -A 5 "system_prompt" "$agent"
+    done
+    
+    # Edit specific agent
+    vim agents/researcher/agent.toml
+    ```
+  </Step>
+
+  <Step title="Configure Channel Credentials">
+    Update channel tokens and webhooks:
+    
+    ```bash
+    # Edit channel configs
+    vim config/channels/slack.toml
+    vim config/channels/discord.toml
+    
+    # Or use environment variables
+    export SLACK_TOKEN="xoxb-..."
+    export DISCORD_WEBHOOK="https://..."
+    ```
+  </Step>
+
+  <Step title="Implement Custom Tools">
+    If you have custom OpenClaw tools, implement them as AgentOS functions:
+    
+    ```typescript src/openclaw-tools.ts
+    import { init } from "iii-sdk";
+    import { execFile } from "child_process";
+    import { promisify } from "util";
+    
+    const execFileAsync = promisify(execFile);
+    const { registerFunction } = init("ws://localhost:49134", {
+      workerName: "openclaw-tools"
+    });
+    
+    registerFunction(
+      {
+        id: "database_query",
+        description: "Query the database",
+      },
+      async ({ query }: { query: string }) => {
+        const { stdout } = await execFileAsync("python", [
+          "-m",
+          "tools.database",
+          query
+        ]);
+        return JSON.parse(stdout);
+      }
+    );
+    
+    console.log("openclaw-tools worker started");
+    ```
+    
+    ```bash
+    npx tsx src/openclaw-tools.ts &
+    ```
+  </Step>
+
+  <Step title="Test Agents">
+    Verify each agent works:
+    
+    ```bash
+    # List agents
+    agentos agent list
+    
+    # Test researcher agent
+    agentos message researcher "Search for recent papers on AI agents"
+    
+    # Test coder agent
+    agentos chat coder
+    ```
+  </Step>
+
+  <Step title="Test Cron Jobs">
+    Verify scheduled hands:
+    
+    ```bash
+    # List hands
+    agentos hand list
+    
+    # Test hand manually (don't wait for schedule)
+    agentos hand run daily_report
+    
+    # Check hand logs
+    agentos logs --filter "hand=daily_report"
+    ```
+  </Step>
+
+  <Step title="Test Channels">
+    Send test messages to channels:
+    
+    ```bash
+    # Test Slack channel
+    agentos channel test slack
+    
+    # Send message via channel
+    agentos channel send slack "Migration test from AgentOS"
+    ```
+  </Step>
+</Steps>
+
+## Advanced Migration
+
+### Custom Config Path
+
+Specify config path explicitly:
+
+```bash
+agentos migrate openclaw --config-path /custom/path/openclaw.json
+```
+
+### Selective Migration
+
+Migrate specific components:
+
+```bash
+# Dry run to see what will be migrated
+agentos migrate openclaw --dry-run > plan.json
+
+# Review plan
+cat plan.json | jq '.items[] | select(.type == "agent")'
+
+# Execute migration
+agentos migrate openclaw
+
+# Delete unwanted items
+rm -rf agents/unwanted-agent
+```
+
+### Programmatic Migration
+
+```typescript migrate.ts
+import { init } from "iii-sdk";
+import fs from "fs/promises";
+
+const { trigger } = init("ws://localhost:49134", { workerName: "migrator" });
+
+async function migrate() {
+  // Run migration
+  const result = await trigger("migrate::openclaw", {
+    dryRun: false,
+    configPath: "~/.openclaw/openclaw.json"
+  }, 120_000);
+  
+  console.log(`Migrated: ${result.summary.migrated}`);
+  console.log(`Skipped: ${result.summary.skipped}`);
+  console.log(`Errors: ${result.summary.errors}`);
+  
+  // Generate report
+  const report = await trigger("migrate::report", {
+    format: "markdown"
+  }, 30_000);
+  
+  // Save report
+  await fs.writeFile("migration-report.md", report.markdown);
+  console.log("Report saved to migration-report.md");
+}
+
+migrate().catch(console.error);
+```
+
+```bash
+npx tsx migrate.ts
+```
+
+## JSON5 Config Parsing
+
+OpenClaw configs support JSON5 (comments, trailing commas, unquoted keys). The migration tool handles:
+
+```json5
+{
+  // Comments are supported
+  agents: {  // Unquoted keys
+    "my-agent": {
+      model: "gpt-4",
+      tools: [
+        "web_search",
+        "file_read",  // Trailing comma OK
+      ],
+    },  // Trailing comma OK
+  }
+}
+```
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="Config file not found">
+    If migration can't find your OpenClaw config:
+    
+    ```bash
+    # Search for config files
+    find ~ -name "openclaw.json" -o -name "clawdbot.json" 2>/dev/null
+    
+    # Specify path explicitly
+    agentos migrate openclaw --config-path /path/to/config.json
+    ```
+  </Accordion>
+
+  <Accordion title="JSON5 parse error">
+    If config has syntax errors:
+    
+    ```bash
+    # Validate JSON5
+    node -e "require('json5').parse(require('fs').readFileSync('config.json5', 'utf8'))"
+    
+    # Or convert to JSON
+    npm install -g json5
+    json5 config.json5 > config.json
+    agentos migrate openclaw --config-path config.json
+    ```
+  </Accordion>
+
+  <Accordion title="Custom tool not working">
+    Implement custom tools as AgentOS functions:
+    
+    ```typescript
+    registerFunction(
+      { id: "my_custom_tool", description: "..." },
+      async (input: any) => {
+        // Your OpenClaw tool logic here
+      }
+    );
+    ```
+    
+    Update agent config:
+    ```toml
+    tools = ["tool::*", "my_custom_tool"]
+    ```
+  </Accordion>
+
+  <Accordion title="Channel credentials invalid">
+    Update channel tokens after migration:
+    
+    ```bash
+    # Edit channel config
+    vim config/channels/slack.toml
+    
+    # Update token field
+    token = "xoxb-NEW-TOKEN"
+    
+    # Test channel
+    agentos channel test slack
+    ```
+  </Accordion>
+
+  <Accordion title="Cron schedule not working">
+    Verify cron schedule syntax:
+    
+    ```toml
+    # OpenClaw cron: "0 9 * * *" (9 AM daily)
+    # AgentOS uses same format
+    schedule = "0 9 * * *"
+    
+    # Test manually first
+    agentos hand run my_hand
+    
+    # Check pulse worker is running
+    ps aux | grep pulse
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Migration Checklist
+
+- [ ] Locate OpenClaw config file
+- [ ] Run `agentos migrate scan`
+- [ ] Preview with `agentos migrate openclaw --dry-run`
+- [ ] Execute `agentos migrate openclaw`
+- [ ] Review report: `agentos migrate report`
+- [ ] Customize system prompts in `agents/*/agent.toml`
+- [ ] Update channel credentials in `config/channels/*.toml`
+- [ ] Implement custom tools in `src/tools.ts`
+- [ ] Test all agents: `agentos agent list` and `agentos chat <name>`
+- [ ] Test cron jobs: `agentos hand run <name>`
+- [ ] Test channels: `agentos channel test <name>`
+- [ ] Configure API keys: `agentos config set-key`
+- [ ] Backup original config: `cp ~/.openclaw ~/.openclaw.backup`
+- [ ] (Optional) Remove OpenClaw: `rm -rf ~/.openclaw`
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Agents" icon="robot" href="/development/creating-agents">
+    Customize your migrated agents
+  </Card>
+  <Card title="Creating Tools" icon="wrench" href="/development/creating-tools">
+    Build custom tools
+  </Card>
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Test your migrated setup
+  </Card>
+  <Card title="Migration Overview" icon="arrows-turn-right" href="/development/migration/overview">
+    General migration guide
+  </Card>
+</CardGroup>

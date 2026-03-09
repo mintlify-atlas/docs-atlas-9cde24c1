@@ -1,0 +1,451 @@
+---
+title: "Development Environment Setup"
+description: "Set up your local development environment for AgentOS with all dependencies and workers"
+---
+
+## Overview
+
+AgentOS is a **polyglot agent framework** built on three primitives: **Worker**, **Function**, **Trigger**. The development environment requires Rust, Node.js, and optionally Python for the embedding worker.
+
+<Info>
+  **Architecture**: Rust for hot path (agent core, security, memory), TypeScript for iteration speed (39 workers), Python for ML (embeddings)
+</Info>
+
+## Requirements
+
+<Steps>
+  <Step title="Install iii-engine">
+    AgentOS runs on top of [iii-engine](https://iii.dev), the function orchestration runtime.
+
+    ```bash
+    curl -fsSL https://iii.dev/install | sh
+    ```
+
+    Installs to `~/.local/bin/iii`
+
+    Requires: **iii-engine v0.3+**
+  </Step>
+
+  <Step title="Install Rust">
+    Required for all Rust crates (18 workers including agent-core, security, memory, llm-router).
+
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    ```
+
+    Requires: **Rust 1.75+**
+  </Step>
+
+  <Step title="Install Node.js">
+    Required for TypeScript workers (39 workers including api, tools, workflow).
+
+    ```bash
+    # Using nvm (recommended)
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+    nvm install 20
+    nvm use 20
+
+    # Or using package manager
+    # Ubuntu/Debian: sudo apt install nodejs npm
+    # macOS: brew install node
+    ```
+
+    Requires: **Node.js 20+**
+  </Step>
+
+  <Step title="Install Python (Optional)">
+    Required only for the embedding worker (text embeddings via SentenceTransformers).
+
+    ```bash
+    # Python 3.11+ recommended
+    sudo apt install python3 python3-pip  # Ubuntu/Debian
+    # or: brew install python@3.11         # macOS
+
+    # Install dependencies
+    pip install sentence-transformers iii-sdk
+    ```
+
+    Requires: **Python 3.11+** (optional)
+
+    <Note>
+      If Python is not installed, the embedding worker falls back to hash-based embeddings.
+    </Note>
+  </Step>
+</Steps>
+
+## Clone Repository
+
+```bash
+git clone https://github.com/iii-hq/agentos.git
+cd agentos
+```
+
+## Install Dependencies
+
+<CodeGroup>
+
+```bash Rust Dependencies
+# Build all Rust crates (takes 5-10 minutes first time)
+cargo build --workspace --release
+```
+
+```bash Node.js Dependencies
+# Install TypeScript dependencies
+npm install
+```
+
+```bash Python Dependencies
+# Install Python dependencies (optional)
+pip install -r workers/embedding/requirements.txt
+```
+
+</CodeGroup>
+
+## Configuration
+
+Create a `config.yaml` file for iii-engine:
+
+```yaml config.yaml
+modules:
+  - name: websocket
+    config:
+      host: "127.0.0.1"
+      port: 49134
+  
+  - name: rest
+    config:
+      host: "127.0.0.1"
+      port: 3111
+  
+  - name: streams
+    config:
+      host: "127.0.0.1"
+      port: 3112
+  
+  - name: state
+    config:
+      path: ".state"
+  
+  - name: queue
+  
+  - name: pubsub
+  
+  - name: cron
+  
+  - name: kv_server
+  
+  - name: observability
+    config:
+      enabled: true
+```
+
+## Running Locally
+
+### Manual Startup (Development)
+
+Start each component individually for maximum control during development:
+
+<Steps>
+  <Step title="Start iii-engine">
+    ```bash
+    iii --config config.yaml
+    ```
+
+    The engine will bind to:
+    - WebSocket: `ws://localhost:49134` (worker connections)
+    - REST API: `http://localhost:3111` (HTTP triggers)
+    - Streams: `ws://localhost:3112` (event streaming)
+  </Step>
+
+  <Step title="Start Rust Workers (Hot Path)">
+    Open a new terminal for each worker or run in background:
+
+    ```bash
+    # Agent core (ReAct loop)
+    cargo run --release -p agentos-core &
+
+    # Security (RBAC, audit, taint tracking)
+    cargo run --release -p agentos-security &
+
+    # Memory (session/episodic memory)
+    cargo run --release -p agentos-memory &
+
+    # LLM Router (25 providers)
+    cargo run --release -p agentos-llm-router &
+
+    # WASM Sandbox (untrusted code execution)
+    cargo run --release -p agentos-wasm-sandbox &
+    ```
+  </Step>
+
+  <Step title="Start Control Plane Workers">
+    These are optional for basic agent functionality:
+
+    ```bash
+    cargo run --release -p agentos-realm &       # Multi-tenant isolation
+    cargo run --release -p agentos-hierarchy &   # Agent org structure
+    cargo run --release -p agentos-directive &   # Goal alignment
+    cargo run --release -p agentos-mission &     # Task lifecycle
+    cargo run --release -p agentos-ledger &      # Budget enforcement
+    cargo run --release -p agentos-council &     # Governance
+    cargo run --release -p agentos-pulse &       # Scheduled invocation
+    cargo run --release -p agentos-bridge &      # External runtime adapters
+    ```
+  </Step>
+
+  <Step title="Start TypeScript Workers">
+    ```bash
+    # API (OpenAI-compatible REST API)
+    npx tsx src/api.ts &
+
+    # Agent core (TypeScript agent loop with security gates)
+    npx tsx src/agent-core.ts &
+
+    # Tools (60+ built-in tools)
+    npx tsx src/tools.ts &
+
+    # Workflow (multi-step workflow engine)
+    npx tsx src/workflow.ts &
+    ```
+  </Step>
+
+  <Step title="Start Python Worker (Optional)">
+    ```bash
+    python workers/embedding/main.py &
+    ```
+  </Step>
+
+  <Step title="Test the Setup">
+    ```bash
+    # Using CLI
+    cargo run -p agentos-cli -- chat default
+
+    # Or directly via agent::chat function
+    cargo run -p agentos-cli -- message default "What can you do?"
+    ```
+  </Step>
+</Steps>
+
+### Using the CLI (Production-like)
+
+For a production-like environment, use the CLI to manage all workers:
+
+```bash
+# Initialize project
+cargo run -p agentos-cli -- init --quick
+
+# Configure API keys
+cargo run -p agentos-cli -- config set-key anthropic $ANTHROPIC_API_KEY
+
+# Start all workers (uses process management)
+cargo run -p agentos-cli -- start
+
+# Check status
+cargo run -p agentos-cli -- status
+
+# Chat with an agent
+cargo run -p agentos-cli -- chat default
+
+# Stop all workers
+cargo run -p agentos-cli -- stop
+```
+
+## Verify Installation
+
+<Tabs>
+  <Tab title="Rust Workers">
+    ```bash
+    # Check if agent-core is registered
+    curl http://localhost:3111/functions | jq '.[] | select(.id | startswith("agent::"))'
+    
+    # Expected: agent::chat, agent::create, agent::list, agent::delete, agent::list_tools
+    ```
+  </Tab>
+
+  <Tab title="TypeScript Workers">
+    ```bash
+    # Check if tools are registered
+    curl http://localhost:3111/functions | jq '.[] | select(.id | startswith("tool::"))'
+    
+    # Expected: tool::file_read, tool::file_write, tool::web_fetch, tool::web_search, etc.
+    ```
+  </Tab>
+
+  <Tab title="Python Worker">
+    ```bash
+    # Check if embedding worker is registered
+    curl http://localhost:3111/functions | jq '.[] | select(.id | startswith("embedding::"))'
+    
+    # Expected: embedding::generate, embedding::similarity
+    ```
+  </Tab>
+
+  <Tab title="Full System">
+    ```bash
+    # Run a full agent conversation
+    curl -X POST http://localhost:3111/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d '{
+        "agentId": "default",
+        "message": "List the files in the current directory",
+        "sessionId": "test-session-1"
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+## Project Structure
+
+```
+agentos/
+├── Cargo.toml              # Rust workspace
+├── package.json            # Node.js package
+├── config.yaml             # iii-engine configuration
+├── vitest.config.ts        # Test configuration
+│
+├── crates/                 # Rust crates (18)
+│   ├── agent-core/         # ReAct agent loop (~320 LOC)
+│   ├── security/           # RBAC, audit, taint, signing (~700 LOC)
+│   ├── memory/             # Session/episodic memory (~840 LOC)
+│   ├── llm-router/         # 25 LLM providers (~320 LOC)
+│   ├── wasm-sandbox/       # WASM execution (~180 LOC)
+│   ├── cli/                # 50+ commands (~700 LOC)
+│   ├── tui/                # 21-screen dashboard (~330 LOC)
+│   └── ...                 # 11 more crates
+│
+├── src/                    # TypeScript workers (39)
+│   ├── api.ts              # OpenAI-compatible API
+│   ├── agent-core.ts       # TS agent loop
+│   ├── tools.ts            # 22 built-in tools
+│   ├── tools-extended.ts   # 38 extended tools
+│   ├── workflow.ts         # Multi-step workflow engine
+│   ├── migration.ts        # Framework migration utilities
+│   ├── __tests__/          # 1,439 TypeScript tests
+│   └── channels/           # 40 channel adapters
+│
+├── workers/                # Python workers
+│   └── embedding/          # Text embeddings
+│
+├── agents/                 # 45 agent templates
+├── hands/                  # 7 autonomous hands
+├── integrations/           # 25 MCP integrations
+└── identity/               # System identity files
+```
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="Port already in use">
+    If iii-engine fails to start with "address already in use":
+
+    ```bash
+    # Check what's using the ports
+    lsof -i :49134
+    lsof -i :3111
+    lsof -i :3112
+
+    # Kill processes or change ports in config.yaml
+    ```
+  </Accordion>
+
+  <Accordion title="Worker connection refused">
+    Workers fail to connect to `ws://localhost:49134`:
+
+    1. Ensure iii-engine is running: `ps aux | grep iii`
+    2. Check engine logs for WebSocket module errors
+    3. Verify firewall allows localhost connections
+  </Accordion>
+
+  <Accordion title="Function not found errors">
+    If agent can't find tools like `tool::file_read`:
+
+    ```bash
+    # List all registered functions
+    curl http://localhost:3111/functions | jq '.[].id'
+
+    # Ensure tools worker is running
+    ps aux | grep "tsx src/tools.ts"
+
+    # Restart the worker if missing
+    npx tsx src/tools.ts
+    ```
+  </Accordion>
+
+  <Accordion title="Rust build errors">
+    If `cargo build` fails:
+
+    ```bash
+    # Update Rust toolchain
+    rustup update
+
+    # Clear build cache
+    cargo clean
+
+    # Rebuild
+    cargo build --workspace --release
+    ```
+  </Accordion>
+
+  <Accordion title="Python embedding worker fails">
+    If embedding worker crashes on startup:
+
+    ```bash
+    # Install missing dependencies
+    pip install sentence-transformers torch
+
+    # Or use fallback mode (no ML, hash-based embeddings)
+    # The worker auto-detects and falls back if imports fail
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Workers" icon="code" href="/development/creating-workers">
+    Learn how to create custom workers in Rust, TypeScript, or Python
+  </Card>
+  <Card title="Creating Tools" icon="wrench" href="/development/creating-tools">
+    Build custom tools that agents can use
+  </Card>
+  <Card title="Creating Agents" icon="robot" href="/development/creating-agents">
+    Create custom agent templates with specialized capabilities
+  </Card>
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Run the 2,506 tests across three languages
+  </Card>
+</CardGroup>
+
+## Development Workflow
+
+```bash
+# 1. Make changes to source files
+vim crates/agent-core/src/main.rs
+
+# 2. Rebuild the changed worker
+cargo build --release -p agentos-core
+
+# 3. Restart the worker
+kill $(pgrep -f "agentos-core")
+cargo run --release -p agentos-core &
+
+# 4. Test changes
+cargo run -p agentos-cli -- message default "Test my changes"
+
+# 5. Run tests
+cargo test -p agentos-core
+```
+
+For TypeScript workers:
+
+```bash
+# Changes are auto-reloaded with tsx in watch mode
+npx tsx --watch src/tools.ts
+
+# Or restart manually
+kill $(pgrep -f "tsx src/tools.ts")
+npx tsx src/tools.ts &
+
+# Run tests
+npx vitest --run
+```

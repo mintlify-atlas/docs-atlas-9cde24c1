@@ -1,0 +1,686 @@
+---
+title: Agent Templates
+description: Pre-built agent templates spanning engineering, research, operations, personal productivity, and specialized roles
+---
+
+AgentOS includes **45 production-ready agent templates** organized by division and role. Each template is configured with optimized system prompts, tool access, communication styles, and success metrics.
+
+## Quick Start
+
+Spawn an agent from any template:
+
+```bash
+agentos agent spawn coder
+agentos agent spawn researcher
+agentos agent spawn devops-lead
+```
+
+Or create and customize:
+
+```bash
+agentos agent new my-agent --template coder
+```
+
+## Template Structure
+
+Each agent template is defined in TOML format:
+
+```toml
+[agent]
+name = "coder"
+description = "Full-stack software engineer"
+module = "builtin:chat"
+
+[agent.model]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+max_tokens = 4096
+
+[agent.capabilities]
+tools = ["tool::*"]
+memory_scopes = ["self.*", "shared.*"]
+network_hosts = ["*"]
+
+[persona]
+division = "engineering"
+communication_style = "Direct and technical"
+critical_rules = [
+  "Always write tests for new functionality",
+  "Never skip error handling"
+]
+```
+
+## Engineering Division
+
+Core software development agents optimized for code quality and shipping speed.
+
+<CardGroup cols={2}>
+  <Card title="Coder" icon="code">
+    **Full-stack software engineer** that writes, refactors, and ships production-quality code.
+    
+    - Tool Profile: `code`
+    - Division: Engineering
+    - Success Metrics: Code coverage over 80%, Zero P0 bugs, PR merge under 24h
+    
+    ```bash
+    agentos agent spawn coder
+    ```
+  </Card>
+
+  <Card title="Architect" icon="sitemap">
+    **System design specialist** that creates technical specifications, API contracts, and architecture decisions.
+    
+    - Tool Profile: `code`, `research`
+    - Division: Engineering
+    - Success Metrics: Design approval rate over 90%, Implementation matches spec over 95%
+    
+    ```bash
+    agentos agent spawn architect
+    ```
+  </Card>
+
+  <Card title="Code Reviewer" icon="magnifying-glass">
+    **Pull request reviewer** that checks for bugs, security issues, test coverage, and style violations.
+    
+    - Tool Profile: `code`
+    - Division: Engineering
+    - Success Metrics: P0 bug catch rate over 95%, False positive rate under 10%
+    
+    ```bash
+    agentos agent spawn code-reviewer
+    ```
+  </Card>
+
+  <Card title="Debugger" icon="bug">
+    **Bug investigation specialist** that reproduces issues, traces root causes, and proposes fixes.
+    
+    - Tool Profile: `code`, `ops`
+    - Division: Engineering
+    - Success Metrics: Root cause identification over 90%, Fix verification rate over 95%
+    
+    ```bash
+    agentos agent spawn debugger
+    ```
+  </Card>
+
+  <Card title="Test Engineer" icon="vial">
+    **QA automation expert** that writes test cases, runs test suites, and collects evidence.
+    
+    - Tool Profile: `code`
+    - Division: Engineering
+    - Success Metrics: Test coverage over 85%, Flaky test rate under 5%
+    
+    ```bash
+    agentos agent spawn test-engineer
+    ```
+  </Card>
+
+  <Card title="DevOps Lead" icon="rocket">
+    **Infrastructure and deployment specialist** that manages CI/CD, monitoring, and incident response.
+    
+    - Tool Profile: `ops`
+    - Division: Engineering
+    - Success Metrics: Deployment success rate over 99%, MTTR under 30min
+    
+    ```bash
+    agentos agent spawn devops-lead
+    ```
+  </Card>
+
+  <Card title="AI Engineer" icon="brain">
+    **Machine learning specialist** that trains models, optimizes prompts, and evaluates AI systems.
+    
+    - Tool Profile: `code`, `data`
+    - Division: Engineering
+    - Success Metrics: Model accuracy improvement over 10%, Inference latency under 200ms
+    
+    ```bash
+    agentos agent spawn ai-engineer
+    ```
+  </Card>
+
+  <Card title="Mobile Builder" icon="mobile">
+    **Mobile development specialist** for iOS and Android apps with platform-specific optimizations.
+    
+    - Tool Profile: `code`
+    - Division: Engineering
+    - Success Metrics: App Store approval rate over 95%, Crash-free users over 99.5%
+    
+    ```bash
+    agentos agent spawn mobile-builder
+    ```
+  </Card>
+</CardGroup>
+
+## Research Division
+
+Deep research and analysis agents for information discovery and synthesis.
+
+<CardGroup cols={2}>
+  <Card title="Researcher" icon="microscope">
+    **Deep research agent** that finds, synthesizes, and summarizes information from multiple sources.
+    
+    - Tool Profile: `research`
+    - Success Metrics: Source accuracy over 95%, Stakeholder satisfaction over 4/5
+    
+    ```bash
+    agentos agent spawn researcher
+    ```
+  </Card>
+
+  <Card title="Trend Researcher" icon="chart-line">
+    **Market and technology trend analyst** that identifies emerging patterns and opportunities.
+    
+    - Tool Profile: `research`
+    - Success Metrics: Trend prediction accuracy over 80%, Early signal detection lead time over 2 weeks
+    
+    ```bash
+    agentos agent spawn trend-researcher
+    ```
+  </Card>
+
+  <Card title="Evidence Collector" icon="folder-open">
+    **QA evidence gatherer** that captures screenshots, logs, and test results for bug reports.
+    
+    - Tool Profile: `research`, `ops`
+    - Success Metrics: Evidence completeness over 95%, Reproduction rate over 90%
+    
+    ```bash
+    agentos agent spawn evidence-collector
+    ```
+  </Card>
+
+  <Card title="Reality Checker" icon="shield-check">
+    **Fact verification specialist** that validates claims and identifies misinformation.
+    
+    - Tool Profile: `research`
+    - Success Metrics: Fact-check accuracy over 98%, False positive rate under 2%
+    
+    ```bash
+    agentos agent spawn reality-checker
+    ```
+  </Card>
+</CardGroup>
+
+## Operations & Management
+
+Project management, orchestration, and operational agents.
+
+<CardGroup cols={2}>
+  <Card title="Ops" icon="gears">
+    **System operations specialist** that monitors infrastructure, handles alerts, and performs maintenance.
+    
+    - Tool Profile: `ops`
+    - Success Metrics: Alert response time under 5min, Incident prevention rate over 70%
+    
+    ```bash
+    agentos agent spawn ops
+    ```
+  </Card>
+
+  <Card title="Orchestrator" icon="diagram-project">
+    **Multi-agent coordinator** that delegates tasks and manages swarm workflows.
+    
+    - Tool Profile: `full`
+    - Success Metrics: Task completion rate over 95%, Agent utilization over 70%
+    
+    ```bash
+    agentos agent spawn orchestrator
+    ```
+  </Card>
+
+  <Card title="Planner" icon="calendar">
+    **Strategic planning agent** that breaks down goals into actionable roadmaps.
+    
+    - Tool Profile: `chat`
+    - Success Metrics: Plan adherence over 80%, Milestone hit rate over 90%
+    
+    ```bash
+    agentos agent spawn planner
+    ```
+  </Card>
+
+  <Card title="Sprint Prioritizer" icon="list-check">
+    **Agile sprint manager** that prioritizes backlog items and tracks sprint progress.
+    
+    - Tool Profile: `chat`
+    - Success Metrics: Sprint velocity predictability over 85%, Backlog grooming coverage over 90%
+    
+    ```bash
+    agentos agent spawn sprint-prioritizer
+    ```
+  </Card>
+</CardGroup>
+
+## Data & Analysis
+
+Data science, analytics, and performance measurement agents.
+
+<CardGroup cols={2}>
+  <Card title="Analyst" icon="chart-bar">
+    **Data analyst** that queries databases, builds dashboards, and generates insights.
+    
+    - Tool Profile: `data`
+    - Success Metrics: Query accuracy over 98%, Dashboard update latency under 1min
+    
+    ```bash
+    agentos agent spawn analyst
+    ```
+  </Card>
+
+  <Card title="Data Scientist" icon="flask">
+    **Statistical modeling expert** that performs exploratory analysis and hypothesis testing.
+    
+    - Tool Profile: `data`, `code`
+    - Success Metrics: Model R² over 0.85, Feature importance clarity score over 8/10
+    
+    ```bash
+    agentos agent spawn data-scientist
+    ```
+  </Card>
+
+  <Card title="Performance Benchmarker" icon="stopwatch">
+    **System performance tester** that measures latency, throughput, and resource usage.
+    
+    - Tool Profile: `ops`, `code`
+    - Success Metrics: Benchmark reproducibility over 95%, Regression detection rate over 90%
+    
+    ```bash
+    agentos agent spawn performance-benchmarker
+    ```
+  </Card>
+
+  <Card title="Feedback Synthesizer" icon="comment-dots">
+    **User feedback analyzer** that aggregates and categorizes product feedback.
+    
+    - Tool Profile: `data`, `research`
+    - Success Metrics: Feedback categorization accuracy over 90%, Insight actionability over 80%
+    
+    ```bash
+    agentos agent spawn feedback-synthesizer
+    ```
+  </Card>
+</CardGroup>
+
+## Content & Creative
+
+Content creation, design, and marketing agents.
+
+<CardGroup cols={2}>
+  <Card title="Writer" icon="pen">
+    **Content writer** for blogs, documentation, and marketing copy.
+    
+    - Tool Profile: `chat`, `research`
+    - Success Metrics: First-draft acceptance rate over 75%, SEO score over 85/100
+    
+    ```bash
+    agentos agent spawn writer
+    ```
+  </Card>
+
+  <Card title="Doc Writer" icon="book">
+    **Technical documentation specialist** that writes clear, comprehensive developer docs.
+    
+    - Tool Profile: `code`, `chat`
+    - Success Metrics: Doc completeness over 90%, Reader comprehension score over 4/5
+    
+    ```bash
+    agentos agent spawn doc-writer
+    ```
+  </Card>
+
+  <Card title="Content Creator" icon="photo-film">
+    **Multi-format content producer** for social media, video scripts, and campaigns.
+    
+    - Tool Profile: `chat`, `research`
+    - Success Metrics: Engagement rate over 3%, Content approval rate over 80%
+    
+    ```bash
+    agentos agent spawn content-creator
+    ```
+  </Card>
+
+  <Card title="Brand Guardian" icon="shield">
+    **Brand voice enforcer** that ensures consistency across all content.
+    
+    - Tool Profile: `chat`
+    - Success Metrics: Voice consistency score over 90%, Off-brand rejection rate over 95%
+    
+    ```bash
+    agentos agent spawn brand-guardian
+    ```
+  </Card>
+
+  <Card title="Image Prompt Engineer" icon="wand-magic-sparkles">
+    **AI image generation specialist** that crafts optimal prompts for DALL-E, Midjourney, Stable Diffusion.
+    
+    - Tool Profile: `chat`
+    - Success Metrics: First-try success rate over 70%, Aesthetic score over 8/10
+    
+    ```bash
+    agentos agent spawn image-prompt-engineer
+    ```
+  </Card>
+
+  <Card title="Translator" icon="language">
+    **Multi-language translation specialist** with cultural context awareness.
+    
+    - Tool Profile: `chat`
+    - Success Metrics: Translation accuracy over 95%, Cultural appropriateness over 90%
+    
+    ```bash
+    agentos agent spawn translator
+    ```
+  </Card>
+</CardGroup>
+
+## Growth & Marketing
+
+Marketing, sales, and growth optimization agents.
+
+<CardGroup cols={2}>
+  <Card title="Growth Hacker" icon="rocket">
+    **Growth strategy specialist** that designs experiments and analyzes conversion funnels.
+    
+    - Tool Profile: `data`, `research`
+    - Success Metrics: Experiment success rate over 40%, Conversion lift over 15%
+    
+    ```bash
+    agentos agent spawn growth-hacker
+    ```
+  </Card>
+
+  <Card title="App Store Optimizer" icon="store">
+    **ASO specialist** that optimizes app listings, keywords, and screenshots for discovery.
+    
+    - Tool Profile: `research`, `chat`
+    - Success Metrics: Keyword ranking improvement over 20%, Conversion rate lift over 10%
+    
+    ```bash
+    agentos agent spawn app-store-optimizer
+    ```
+  </Card>
+
+  <Card title="Social Media" icon="hashtag">
+    **Social media manager** that schedules posts, engages with followers, and tracks trends.
+    
+    - Tool Profile: `chat`, `research`
+    - Success Metrics: Engagement rate over 2.5%, Follower growth over 5%/month
+    
+    ```bash
+    agentos agent spawn social-media
+    ```
+  </Card>
+
+  <Card title="Sales Assistant" icon="handshake">
+    **Sales support agent** that qualifies leads, drafts proposals, and tracks pipeline.
+    
+    - Tool Profile: `chat`
+    - Success Metrics: Lead qualification accuracy over 85%, Proposal win rate over 30%
+    
+    ```bash
+    agentos agent spawn sales-assistant
+    ```
+  </Card>
+</CardGroup>
+
+## Personal Productivity
+
+Personal assistant agents for everyday tasks and life management.
+
+<CardGroup cols={2}>
+  <Card title="Assistant" icon="user">
+    **General-purpose assistant** for everyday tasks, Q&A, and productivity.
+    
+    - Tool Profile: `chat`
+    - Success Metrics: Task completion rate over 95%, User satisfaction over 4.5/5
+    
+    ```bash
+    agentos agent spawn assistant
+    ```
+  </Card>
+
+  <Card title="Email Assistant" icon="envelope">
+    **Email management specialist** that drafts replies, filters spam, and schedules sends.
+    
+    - Tool Profile: `chat`
+    - Success Metrics: Inbox zero achievement rate over 70%, Response quality over 4/5
+    
+    ```bash
+    agentos agent spawn email-assistant
+    ```
+  </Card>
+
+  <Card title="Meeting Assistant" icon="calendar-days">
+    **Meeting scheduler and note-taker** that manages calendars and summarizes discussions.
+    
+    - Tool Profile: `chat`
+    - Success Metrics: Scheduling conflict rate under 5%, Action item capture over 95%
+    
+    ```bash
+    agentos agent spawn meeting-assistant
+    ```
+  </Card>
+
+  <Card title="Personal Finance" icon="dollar-sign">
+    **Financial tracker and advisor** that categorizes expenses and provides budget insights.
+    
+    - Tool Profile: `data`, `chat`
+    - Success Metrics: Transaction categorization accuracy over 95%, Budget adherence over 80%
+    
+    ```bash
+    agentos agent spawn personal-finance
+    ```
+  </Card>
+
+  <Card title="Health Tracker" icon="heart-pulse">
+    **Wellness monitoring assistant** that tracks fitness, nutrition, and health metrics.
+    
+    - Tool Profile: `chat`
+    - Success Metrics: Daily logging adherence over 85%, Goal achievement rate over 70%
+    
+    ```bash
+    agentos agent spawn health-tracker
+    ```
+  </Card>
+
+  <Card title="Travel Planner" icon="plane">
+    **Trip planning specialist** that books flights, hotels, and creates itineraries.
+    
+    - Tool Profile: `research`, `chat`
+    - Success Metrics: Booking success rate over 95%, Itinerary satisfaction over 4/5
+    
+    ```bash
+    agentos agent spawn travel-planner
+    ```
+  </Card>
+
+  <Card title="Home Automation" icon="house">
+    **Smart home controller** that manages IoT devices and creates automation routines.
+    
+    - Tool Profile: `ops`
+    - Success Metrics: Automation reliability over 99%, Energy savings over 15%
+    
+    ```bash
+    agentos agent spawn home-automation
+    ```
+  </Card>
+</CardGroup>
+
+## Specialized
+
+Domain-specific and specialized purpose agents.
+
+<CardGroup cols={2}>
+  <Card title="Customer Support" icon="headset">
+    **Customer service agent** that handles tickets, FAQs, and escalations.
+    
+    - Tool Profile: `chat`, `research`
+    - Success Metrics: First response time under 5min, Resolution rate over 80%
+    
+    ```bash
+    agentos agent spawn customer-support
+    ```
+  </Card>
+
+  <Card title="Legal Assistant" icon="gavel">
+    **Legal research and document drafting assistant** for contracts and compliance.
+    
+    - Tool Profile: `research`, `chat`
+    - Success Metrics: Document accuracy over 98%, Research completeness over 90%
+    
+    ```bash
+    agentos agent spawn legal-assistant
+    ```
+  </Card>
+
+  <Card title="Recruiter" icon="users">
+    **Recruiting coordinator** that screens resumes, schedules interviews, and tracks candidates.
+    
+    - Tool Profile: `chat`, `research`
+    - Success Metrics: Candidate screening accuracy over 85%, Interview show rate over 90%
+    
+    ```bash
+    agentos agent spawn recruiter
+    ```
+  </Card>
+
+  <Card title="Security Auditor" icon="lock">
+    **Security assessment specialist** that scans for vulnerabilities and compliance gaps.
+    
+    - Tool Profile: `code`, `ops`
+    - Success Metrics: Vulnerability detection rate over 95%, False positive rate under 10%
+    
+    ```bash
+    agentos agent spawn security-auditor
+    ```
+  </Card>
+
+  <Card title="Tutor" icon="graduation-cap">
+    **Educational assistant** that explains concepts, creates exercises, and tracks learning progress.
+    
+    - Tool Profile: `chat`
+    - Success Metrics: Concept mastery rate over 80%, Student satisfaction over 4/5
+    
+    ```bash
+    agentos agent spawn tutor
+    ```
+  </Card>
+
+  <Card title="UX Architect" icon="palette">
+    **User experience designer** that creates wireframes, user flows, and interaction patterns.
+    
+    - Tool Profile: `chat`, `research`
+    - Success Metrics: Design approval rate over 85%, User testing score over 4/5
+    
+    ```bash
+    agentos agent spawn ux-architect
+    ```
+  </Card>
+
+  <Card title="Rapid Prototyper" icon="hammer">
+    **Fast MVP builder** that prioritizes speed over polish for quick validation.
+    
+    - Tool Profile: `code`
+    - Success Metrics: Prototype turnaround under 24h, Core functionality complete over 90%
+    
+    ```bash
+    agentos agent spawn rapid-prototyper
+    ```
+  </Card>
+
+  <Card title="Hello World" icon="star">
+    **Minimal starter template** for building custom agents from scratch.
+    
+    - Tool Profile: `chat`
+    - Use Case: Starting point for custom agent development
+    
+    ```bash
+    agentos agent new my-custom-agent --template hello-world
+    ```
+  </Card>
+</CardGroup>
+
+## Customizing Templates
+
+All templates support customization:
+
+<Accordion title="Modify system prompt">
+  ```bash
+  # Edit the agent.toml file
+  system_prompt = """
+  You are a senior software engineer specialized in Rust.
+  Always prefer zero-copy patterns and consider memory safety.
+  """
+  ```
+</Accordion>
+
+<Accordion title="Restrict tool access">
+  ```toml
+  [agent.capabilities]
+  tools = [
+    "tool::file_read",
+    "tool::file_write",
+    "tool::shell_exec"
+  ]
+  # Use globs for categories
+  tools = ["tool::file_*", "tool::web_*"]
+  ```
+</Accordion>
+
+<Accordion title="Change LLM model">
+  ```toml
+  [agent.model]
+  provider = "openai"
+  model = "gpt-4o"
+  max_tokens = 8192
+  temperature = 0.7
+  ```
+</Accordion>
+
+<Accordion title="Set resource limits">
+  ```toml
+  [agent.resources]
+  max_tokens_per_hour = 100000
+  max_memory_mb = 512
+  max_concurrent_tasks = 5
+  ```
+</Accordion>
+
+<Accordion title="Configure persona traits">
+  ```toml
+  [persona]
+  division = "engineering"
+  communication_style = "Concise and technical"
+  critical_rules = [
+    "Always validate inputs",
+    "Never expose credentials in logs"
+  ]
+  
+  [persona.workflow]
+  phases = ["Analyze", "Design", "Implement", "Verify"]
+  
+  [persona.success_metrics]
+  metrics = [
+    "Code coverage over 90%",
+    "Deployment success rate over 99%"
+  ]
+  ```
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Workflows" icon="diagram-project" href="/templates/workflows">
+    Combine multiple agents into multi-step workflows
+  </Card>
+  <Card title="Hands" icon="hand" href="/templates/hands">
+    Enable autonomous background execution with hands
+  </Card>
+  <Card title="Tool Profiles" icon="toolbox" href="/customize/tool-profiles">
+    Optimize agent capabilities with tool filtering
+  </Card>
+  <Card title="Agent Architecture" icon="sitemap" href="/core-concepts/agents">
+    Understand the agent execution model
+  </Card>
+</CardGroup>

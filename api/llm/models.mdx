@@ -1,0 +1,395 @@
+---
+title: Model Catalog
+description: Complete catalog of all 47 LLM models available in AgentOS with pricing and capabilities
+---
+
+AgentOS provides access to **47 models** across 5 performance tiers, spanning frontier reasoning models to cost-effective local options.
+
+## Model Tiers
+
+<Tabs>
+  <Tab title="Frontier">
+    **Most capable models for complex reasoning, research, and advanced tasks**
+
+    | Model | Provider | Context | Price (per 1M tokens) | Features |
+    |-------|----------|---------|------------------------|----------|
+    | `claude-opus-4-6` | Anthropic | 200K | $15 / $75 | Tools, Vision, 32K output |
+    | `o3` | OpenAI | 200K | $10 / $40 | Reasoning, 100K output |
+    | `gemini-2.5-pro` | Google | 1M | $1.25 / $10 | Vision, Code exec, 65K output |
+    | `grok-3` | xAI | 131K | $3 / $15 | Tools, Vision |
+    | `samba-llama-3.1-405b` | SambaNova | 4K | $5 / $10 | 405B parameters |
+  </Tab>
+  
+  <Tab title="Smart">
+    **Advanced capabilities at lower cost - ideal for most agent tasks**
+
+    | Model | Provider | Context | Price (per 1M tokens) | Features |
+    |-------|----------|---------|------------------------|----------|
+    | `claude-sonnet-4-6` | Anthropic | 200K | $3 / $15 | Tools, Vision, 16K output |
+    | `gpt-4o` | OpenAI | 128K | $2.5 / $10 | Tools, Vision, JSON mode |
+    | `gpt-4.1` | OpenAI | 1M | $2 / $8 | 1M context, Vision |
+    | `deepseek-reasoner` | DeepSeek | 128K | $0.55 / $2.19 | R1 reasoning |
+    | `grok-2` | xAI | 131K | $2 / $10 | Tools, Vision |
+    | `mistral-large` | Mistral | 128K | $2 / $6 | Tools, EU hosting |
+    | `sonar-pro` | Perplexity | 200K | $3 / $15 | Search-augmented |
+    | `command-a` | Cohere | 256K | $2.5 / $10 | RAG-optimized |
+    | `command-r-plus` | Cohere | 128K | $3 / $15 | Tools, Grounding |
+    | `jamba-1.5-large` | AI21 | 256K | $2 / $8 | 256K context |
+    | `qwen-max` | Qwen | 32K | $2.4 / $9.6 | Multilingual |
+    | `glm-4-plus` | Zhipu | 128K | $7 / $7 | Chinese/English |
+    | `moonshot-v1-128k` | Moonshot | 128K | $8.5 / $8.5 | 128K context |
+    | `ernie-4.0-turbo` | Baidu | 128K | $4.2 / $8.4 | Chinese language |
+    | `bedrock-claude-sonnet` | AWS Bedrock | 200K | $3 / $15 | AWS integration |
+    | `copilot-gpt-4o` | GitHub | 128K | $2.5 / $10 | Code-optimized |
+    | `openrouter-auto` | OpenRouter | 128K | Dynamic | Multi-provider routing |
+  </Tab>
+  
+  <Tab title="Balanced">
+    **Cost-effective general purpose models**
+
+    | Model | Provider | Context | Price (per 1M tokens) | Features |
+    |-------|----------|---------|------------------------|----------|
+    | `o4-mini` | OpenAI | 200K | $1.1 / $4.4 | Fast reasoning |
+    | `deepseek-chat` | DeepSeek | 128K | $0.14 / $0.28 | Best value |
+    | `llama-3.3-70b` | Groq | 131K | $0.59 / $0.79 | Fast inference |
+    | `sonar` | Perplexity | 200K | $1 / $1 | Search |
+    | `command-r` | Cohere | 128K | $0.5 / $1.5 | RAG |
+    | `cerebras-llama-3.3-70b` | Cerebras | 8K | $0.6 / $0.6 | Ultra-fast |
+    | `samba-llama-3.3-70b` | SambaNova | 4K | $0.6 / $0.6 | Enterprise |
+    | `hf-llama-3.3-70b` | HuggingFace | 128K | $0.36 / $0.36 | Free tier |
+    | `replicate-llama-3.3-70b` | Replicate | 128K | $0.65 / $2.75 | Custom deploy |
+    | `qwen-plus` | Qwen | 128K | $0.5 / $1.5 | Multilingual |
+    | `abab7-chat` | MiniMax | 245K | $1 / $1 | 245K context |
+    | `glm-4` | Zhipu | 128K | $1.4 / $1.4 | Chinese/English |
+    | `moonshot-v1-32k` | Moonshot | 32K | $3.3 / $3.3 | Chinese |
+    | `ernie-3.5-turbo` | Baidu | 128K | $0.56 / $1.12 | Chinese |
+    | `bedrock-nova-pro` | AWS Bedrock | 300K | $0.8 / $3.2 | Amazon Nova |
+    | `bedrock-llama-3.3-70b` | AWS Bedrock | 128K | $0.72 / $0.72 | AWS Llama |
+    | `together-llama-3.3-70b` | Together | 131K | $0.88 / $0.88 | Open models |
+    | `fireworks-llama-3.3-70b` | Fireworks | 131K | $0.9 / $0.9 | Fast hosting |
+  </Tab>
+  
+  <Tab title="Fast">
+    **Optimized for speed and low latency**
+
+    | Model | Provider | Context | Price (per 1M tokens) | Features |
+    |-------|----------|---------|------------------------|----------|
+    | `claude-haiku-4-5` | Anthropic | 200K | $0.8 / $4 | Tools, Vision, Fast |
+    | `gpt-4o-mini` | OpenAI | 128K | $0.15 / $0.6 | Best price/performance |
+    | `gemini-2.5-flash` | Google | 1M | $0.15 / $0.6 | Ultra-fast, 1M context |
+    | `grok-3-mini` | xAI | 131K | $0.3 / $0.5 | Fast responses |
+    | `jamba-1.5-mini` | AI21 | 256K | $0.2 / $0.4 | 256K context |
+    | `qwen-turbo` | Qwen | 1M | $0.05 / $0.15 | 1M context, lowest cost |
+    | `hf-mistral-7b` | HuggingFace | 32K | Free | Free tier |
+  </Tab>
+  
+  <Tab title="Local">
+    **Self-hosted models with zero API costs**
+
+    All local models are free but require local compute resources.
+
+    ### Ollama Models
+    Run any model from [ollama.ai/library](https://ollama.ai/library):
+    - `llama3.3` - Meta Llama 3.3 70B
+    - `qwen2.5` - Qwen 2.5 72B
+    - `deepseek-r1` - DeepSeek R1 reasoning
+    - `mistral` - Mistral 7B/Mixtral
+    - `phi4` - Microsoft Phi-4
+    - `gemma2` - Google Gemma 2
+    - `codestral` - Mistral code specialist
+
+    ### vLLM
+    Production-grade self-hosting with GPU optimization
+
+    ### LM Studio
+    Desktop GUI for running models locally
+  </Tab>
+</Tabs>
+
+## Model Aliases
+
+AgentOS provides convenient aliases for quick model selection:
+
+```typescript
+const ALIASES = {
+  // Tier shortcuts
+  "best": "claude-opus-4-6",
+  "frontier": "claude-opus-4-6",
+  "smart": "claude-sonnet-4-6",
+  "fast": "claude-haiku-4-5",
+  "cheap": "gpt-4o-mini",
+  
+  // Claude shortcuts
+  "opus": "claude-opus-4-6",
+  "sonnet": "claude-sonnet-4-6",
+  "haiku": "claude-haiku-4-5",
+  
+  // OpenAI shortcuts
+  "gpt4": "gpt-4o",
+  "gpt4o": "gpt-4o",
+  "gpt41": "gpt-4.1",
+  "o3": "o3",
+  "o4": "o4-mini",
+  
+  // Google shortcuts
+  "flash": "gemini-2.5-flash",
+  "pro": "gemini-2.5-pro",
+  "gemini": "gemini-2.5-flash",
+  
+  // Other providers
+  "deepseek": "deepseek-chat",
+  "ds": "deepseek-chat",
+  "r1": "deepseek-reasoner",
+  "llama": "llama-3.3-70b",
+  "grok": "grok-2",
+  "grok3": "grok-3",
+  "mistral": "mistral-large",
+  "sonar": "sonar-pro",
+  "command": "command-a",
+  "jamba": "jamba-1.5-large",
+  "qwen": "qwen-max",
+  "glm": "glm-4-plus",
+  "kimi": "moonshot-v1-128k",
+  "ernie": "ernie-4.0-turbo",
+  "bedrock": "bedrock-claude-sonnet",
+  "nova": "bedrock-nova-pro",
+  "copilot": "copilot-gpt-4o",
+}
+```
+
+### Using Aliases
+
+```bash
+# CLI usage
+agentos message default "Hello" --model sonnet
+agentos models describe haiku
+
+# Or via API
+const result = await trigger('catalog::resolve', { model: 'opus' });
+// Returns full model entry for claude-opus-4-6
+```
+
+## Model Capabilities
+
+### Tool Use (Function Calling)
+
+Models that support structured tool invocation:
+
+<Accordion title="43 models with tool support">
+- All Claude models (Opus, Sonnet, Haiku)
+- All OpenAI models (GPT-4o, o3, o4-mini, GPT-4.1)
+- All Gemini models (Pro, Flash)
+- DeepSeek (Chat, Reasoner)
+- Llama 3.3 70B (all providers)
+- Cohere Command series
+- xAI Grok series
+- Mistral Large
+- AI21 Jamba series
+- All Chinese models (Qwen, GLM, Moonshot, ERNIE)
+- AWS Bedrock models
+</Accordion>
+
+### Vision Support
+
+Models that can process images:
+
+<Accordion title="14 models with vision">
+- Claude Opus 4.6, Sonnet 4.6, Haiku 4.5
+- GPT-4o, GPT-4.1, o3, o4-mini, GPT-4o mini
+- Gemini 2.5 Pro, Gemini 2.5 Flash
+- Grok-2, Grok-3
+- AWS Bedrock Claude, Nova Pro
+- GitHub Copilot GPT-4o
+</Accordion>
+
+### Long Context (>100K tokens)
+
+Models with extended context windows:
+
+<Accordion title="30+ models with 100K+ context">
+- **1M tokens**: Gemini 2.5 (Flash, Pro), GPT-4.1, Qwen Turbo
+- **300K tokens**: AWS Bedrock Nova Pro
+- **256K tokens**: Cohere Command series, AI21 Jamba, MiniMax ABAB 7
+- **200K tokens**: All Claude models, OpenAI o3/o4-mini, Perplexity Sonar, Bedrock Claude
+- **128K+**: Most other modern models
+</Accordion>
+
+## Pricing Comparison
+
+Prices shown as **input / output** per 1 million tokens (USD).
+
+### Best Value Models
+
+| Model | Input | Output | Use Case |
+|-------|-------|--------|----------|
+| `qwen-turbo` | $0.05 | $0.15 | High-volume, 1M context |
+| `deepseek-chat` | $0.14 | $0.28 | General purpose |
+| `gpt-4o-mini` | $0.15 | $0.6 | Fast OpenAI option |
+| `gemini-2.5-flash` | $0.15 | $0.6 | Google ecosystem |
+| `jamba-1.5-mini` | $0.2 | $0.4 | 256K context |
+| `hf-llama-3.3-70b` | $0.36 | $0.36 | Open source |
+| `hf-mistral-7b` | Free | Free | Development/testing |
+
+### Most Expensive (Frontier)
+
+| Model | Input | Output | Justification |
+|-------|-------|--------|---------------|
+| `claude-opus-4-6` | $15 | $75 | Most capable reasoning |
+| `o3` | $10 | $40 | Advanced reasoning |
+| `gemini-2.5-pro` | $1.25 | $10 | 1M context + code exec |
+| `samba-llama-3.1-405b` | $5 | $10 | 405B parameters |
+
+## Model Selection Guide
+
+### By Use Case
+
+<CodeGroup>
+```typescript Simple Chat
+// Use fast tier
+model: "claude-haiku-4-5" // or "gpt-4o-mini" or "gemini-2.5-flash"
+```
+
+```typescript Agent Tasks
+// Use smart tier
+model: "claude-sonnet-4-6" // or "gpt-4o" or "deepseek-reasoner"
+```
+
+```typescript Complex Reasoning
+// Use frontier tier
+model: "claude-opus-4-6" // or "o3" or "gemini-2.5-pro"
+```
+
+```typescript Code Generation
+// Use code-optimized
+model: "gpt-4o" // or "deepseek-chat" or "copilot-gpt-4o"
+```
+
+```typescript RAG/Search
+// Use RAG-optimized
+model: "command-r-plus" // or "sonar-pro"
+```
+
+```typescript Chinese Content
+// Use Chinese models
+model: "qwen-max" // or "glm-4-plus" or "moonshot-v1-128k"
+```
+
+```typescript High Volume
+// Use balanced tier
+model: "deepseek-chat" // $0.14/$0.28 - best value
+```
+
+```typescript Privacy-Critical
+// Use local deployment
+model: "ollama" // or "vllm" or "lmstudio"
+```
+</CodeGroup>
+
+### By Budget
+
+- **Under $0.50/1M tokens**: Qwen Turbo, DeepSeek Chat, HF models, local (free)
+- **$0.50-$2/1M**: Most balanced tier models
+- **$2-$5/1M**: Smart tier models
+- **Over $5/1M**: Frontier models (use sparingly)
+
+## CLI Usage
+
+```bash
+# List all models
+agentos models list
+
+# Filter by tier
+agentos models list --tier smart
+
+# Filter by provider
+agentos models list --provider anthropic
+
+# Filter by capability
+agentos models list --tools
+agentos models list --vision
+
+# Describe a model
+agentos models describe claude-sonnet-4-6
+
+# Output:
+# Model: claude-sonnet-4-6
+# Provider: Anthropic
+# Tier: smart
+# Context: 200,000 tokens
+# Max Output: 16,000 tokens
+# Pricing: $3.00 / $15.00 per 1M tokens
+# Capabilities: tools, vision
+```
+
+## Programmatic Access
+
+```typescript
+import { trigger } from 'iii-sdk';
+
+// List all models
+const models = await trigger('catalog::models', {});
+
+// Filter by tier
+const smartModels = await trigger('catalog::models', { tier: 'smart' });
+
+// Filter by provider
+const anthropicModels = await trigger('catalog::models', { provider: 'anthropic' });
+
+// Resolve model or alias
+const model = await trigger('catalog::resolve', { model: 'sonnet' });
+// Returns full ModelEntry with pricing, capabilities, etc.
+
+// List providers
+const providers = await trigger('catalog::providers', {});
+// Returns provider configs with availability status
+
+// Get aliases
+const aliases = await trigger('catalog::aliases', {});
+```
+
+## HTTP API
+
+```bash
+# List models
+curl http://localhost:3111/api/models
+
+# List providers
+curl http://localhost:3111/api/providers
+
+# Get aliases
+curl http://localhost:3111/api/models/aliases
+
+# Test provider
+curl -X POST http://localhost:3111/api/providers/anthropic/test
+```
+
+## Model Metadata
+
+Each model entry includes:
+
+```typescript
+interface ModelEntry {
+  id: string;                    // Model identifier
+  provider: string;              // Provider name
+  name: string;                  // Display name
+  tier: "frontier" | "smart" | "balanced" | "fast" | "local";
+  contextWindow: number;         // Max input tokens
+  maxOutput: number;             // Max output tokens
+  inputPrice: number;            // $ per 1M input tokens
+  outputPrice: number;           // $ per 1M output tokens
+  supportsTools: boolean;        // Function calling
+  supportsVision: boolean;       // Image input
+  local: boolean;                // Self-hosted
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Details" icon="server" href="/api/llm/providers">
+    Learn about each provider's setup
+  </Card>
+  <Card title="Routing Logic" icon="route" href="/api/llm/routing">
+    Understand automatic model selection
+  </Card>
+</CardGroup>

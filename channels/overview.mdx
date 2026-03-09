@@ -1,0 +1,220 @@
+---
+title: Channel Adapters Overview
+description: Connect AgentOS agents to 40+ communication platforms
+---
+
+AgentOS includes **40 pre-built channel adapters** that enable agents to communicate across messaging platforms, social media, team collaboration tools, and custom webhooks. Each adapter handles platform-specific authentication, message formatting, and bidirectional communication.
+
+## Architecture
+
+Channel adapters are TypeScript workers that:
+
+- Register HTTP webhook endpoints to receive platform events
+- Parse incoming messages and route them to appropriate agents
+- Trigger agent chat functions with platform-specific session IDs
+- Send agent responses back through platform APIs
+- Emit security audit events for compliance tracking
+
+```typescript
+// Typical channel adapter flow
+Platform Webhook → channel::platform::webhook
+                 → resolveAgent()
+                 → agent::chat
+                 → sendMessage()
+                 → security::audit
+```
+
+## Channel Categories
+
+<CardGroup cols={3}>
+  <Card title="Messaging" icon="comments" href="/channels/messaging">
+    15 messaging platforms including Telegram, Discord, Slack, WhatsApp, Teams
+  </Card>
+  
+  <Card title="Social Media" icon="share-nodes" href="/channels/social">
+    9 social platforms including Bluesky, Reddit, Twitch, LinkedIn, Mastodon
+  </Card>
+  
+  <Card title="Collaboration" icon="users">
+    12 team tools including Matrix, Mattermost, Rocket.Chat, Zulip, Discourse
+  </Card>
+  
+  <Card title="Voice & Video" icon="microphone">
+    2 platforms: Mumble, Twitch
+  </Card>
+  
+  <Card title="Notifications" icon="bell">
+    2 platforms: Gotify, ntfy
+  </Card>
+  
+  <Card title="Custom" icon="webhook" href="/channels/custom">
+    Generic webhook adapter for any platform
+  </Card>
+</CardGroup>
+
+## Complete Channel List
+
+### Messaging Platforms (15)
+
+| Channel | Platform | Use Case |
+|---------|----------|----------|
+| `telegram` | Telegram | Instant messaging, bot commands |
+| `discord` | Discord | Community chat, gaming servers |
+| `slack` | Slack | Enterprise team communication |
+| `whatsapp` | WhatsApp Business API | Customer support |
+| `email` | SMTP/IMAP | Email automation |
+| `teams` | Microsoft Teams | Enterprise collaboration |
+| `google-chat` | Google Chat | Workspace integration |
+| `signal` | Signal | Encrypted messaging |
+| `messenger` | Facebook Messenger | Social customer service |
+| `viber` | Viber | International messaging |
+| `line` | LINE | Asia-Pacific markets |
+| `irc` | IRC | Legacy chat networks |
+| `xmpp` | XMPP/Jabber | Open protocol messaging |
+| `threema` | Threema | Privacy-focused messaging |
+| `feishu` | Feishu/Lark | China enterprise market |
+
+### Social Media (9)
+
+| Channel | Platform | Use Case |
+|---------|----------|----------|
+| `bluesky` | Bluesky | Decentralized social network |
+| `mastodon` | Mastodon | Federated social media |
+| `reddit` | Reddit | Community engagement |
+| `twitch` | Twitch | Live streaming chat |
+| `linkedin` | LinkedIn | Professional networking |
+| `nostr` | Nostr | Decentralized protocol |
+| `discourse` | Discourse | Forum discussions |
+| `gitter` | Gitter | Developer communities |
+| `keybase` | Keybase | Encrypted social |
+
+### Team Collaboration (12)
+
+| Channel | Platform | Use Case |
+|---------|----------|----------|
+| `matrix` | Matrix | Decentralized chat |
+| `mattermost` | Mattermost | Self-hosted Slack alternative |
+| `rocketchat` | Rocket.Chat | Open-source team chat |
+| `zulip` | Zulip | Threaded conversations |
+| `revolt` | Revolt | Discord alternative |
+| `guilded` | Guilded | Gaming communities |
+| `webex` | Cisco Webex | Enterprise video/chat |
+| `dingtalk` | DingTalk | China enterprise market |
+| `flock` | Flock | Team productivity |
+| `pumble` | Pumble | Team messaging |
+| `twist` | Twist | Async communication |
+| `nextcloud` | Nextcloud Talk | Self-hosted collaboration |
+
+### Notifications & Other (3)
+
+| Channel | Platform | Use Case |
+|---------|----------|----------|
+| `gotify` | Gotify | Self-hosted push notifications |
+| `ntfy` | ntfy | Simple HTTP notifications |
+| `mumble` | Mumble | Voice chat |
+| `webhook` | Generic Webhook | Any platform |
+
+## Common Configuration
+
+All channel adapters use the AgentOS vault for secure credential storage:
+
+```bash
+# Store platform credentials
+agentos vault set TELEGRAM_BOT_TOKEN "your-token"
+agentos vault set SLACK_BOT_TOKEN "xoxb-..."
+agentos vault set DISCORD_BOT_TOKEN "..."
+
+# Configure channel routing
+agentos channel setup telegram
+agentos channel enable telegram
+```
+
+## CLI Commands
+
+```bash
+agentos channel list              # List all channels
+agentos channel setup <name>      # Configure a channel
+agentos channel test <name>       # Test channel connection
+agentos channel enable <name>     # Enable channel
+agentos channel disable <name>    # Disable channel
+```
+
+## Agent Resolution
+
+Channels use `resolveAgent()` to map platform identifiers to AgentOS agents:
+
+```typescript
+const agentId = await resolveAgent(
+  trigger,
+  "telegram",  // channel type
+  String(chatId)  // platform-specific identifier
+);
+```
+
+This allows:
+- Multiple agents per channel (e.g., different Telegram chats)
+- Default agent fallback if no specific mapping exists
+- Dynamic agent assignment based on context
+
+## Security Features
+
+- **Webhook Signature Verification**: Telegram, Slack, and others validate request signatures
+- **Token Encryption**: All API keys stored in AES-256-GCM vault
+- **Audit Logging**: Every channel message emits `security::audit` event
+- **SSRF Protection**: Generic webhook adapter blocks private IP ranges
+- **Rate Limiting**: Per-agent GCRA token bucket prevents abuse
+
+## Message Splitting
+
+All adapters use `splitMessage()` to handle platform character limits:
+
+```typescript
+const chunks = splitMessage(text, 4096);  // Telegram limit
+for (const chunk of chunks) {
+  await sendMessage(chatId, chunk);
+}
+```
+
+| Platform | Character Limit |
+|----------|----------------|
+| Telegram | 4,096 |
+| Slack | 4,000 |
+| Discord | 2,000 |
+| WhatsApp | 4,096 |
+| Twitter/Bluesky | 300 |
+| Mastodon | 500 |
+
+## Session Management
+
+Each platform uses unique session identifiers for conversation continuity:
+
+```typescript
+sessionId: `telegram:${chatId}`
+sessionId: `discord:${channelId}`
+sessionId: `slack:${channel}:${thread_ts}`
+```
+
+Sessions enable:
+- Conversation history recall
+- Thread-aware responses
+- Multi-user context separation
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Messaging Platforms" icon="comments" href="/channels/messaging">
+    Set up Telegram, Discord, Slack, and more
+  </Card>
+  
+  <Card title="Social Media" icon="share-nodes" href="/channels/social">
+    Connect to Bluesky, Reddit, Twitch, LinkedIn
+  </Card>
+  
+  <Card title="Custom Adapters" icon="code" href="/channels/custom">
+    Build your own channel adapter
+  </Card>
+  
+  <Card title="Security" icon="shield" href="/security/overview">
+    Channel security and audit logging
+  </Card>
+</CardGroup>

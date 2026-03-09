@@ -1,0 +1,667 @@
+---
+title: "Creating Tools"
+description: "Build custom tools that agents can invoke to interact with external systems, files, and APIs"
+---
+
+## Overview
+
+Tools are functions that agents can invoke during their reasoning loop. AgentOS includes **60+ built-in tools** for file operations, web access, code execution, memory, and more. You can extend this with custom tools.
+
+<Info>
+  **Tool = Registered Function**
+  
+  Any function registered with `id` starting with `tool::` becomes available to agents based on their capability configuration.
+</Info>
+
+## Tool Architecture
+
+Tools are just worker functions with the `tool::` prefix:
+
+```
+Agent Loop                 Tools Worker
+    │                          │
+    ├─ tool call ─────────────►│
+    │                          ├─ security checks
+    │                          ├─ execute tool
+    │                          ├─ return result
+    │◄─────────── result ──────┤
+    │                          │
+```
+
+The agent core calls tools via `trigger(toolId, args, timeout)` and receives results or errors.
+
+## Built-in Tools
+
+AgentOS provides 60+ tools out of the box:
+
+| Category | Tools | Examples |
+|----------|-------|----------|
+| **File Operations** | 6 | `file_read`, `file_write`, `file_list`, `apply_patch` |
+| **Web** | 4 | `web_search`, `web_fetch`, `browser_navigate` |
+| **Code** | 5 | `code_analyze`, `code_format`, `code_lint`, `code_test` |
+| **Shell** | 2 | `shell_exec`, `shell_spawn` |
+| **Data** | 8 | `json_parse`, `json_query`, `csv_parse`, `yaml_parse` |
+| **Memory** | 3 | `memory_store`, `memory_recall`, `memory_search` |
+| **Scheduling** | 4 | `schedule_reminder`, `cron_create`, `cron_list` |
+| **Collaboration** | 4 | `todo_create`, `todo_list`, `todo_update` |
+| **Media** | 5 | `image_analyze`, `audio_transcribe`, `tts_speak` |
+| **Agent** | 3 | `agent_list`, `agent_delegate`, `agent_spawn` |
+
+## Creating a Simple Tool
+
+### TypeScript Tool
+
+From `src/tools.ts`, here's the `tool::file_read` implementation:
+
+```typescript src/my-tools.ts
+import { init } from "iii-sdk";
+import { readFile, writeFile } from "fs/promises";
+import { resolve } from "path";
+
+const ENGINE_URL = "ws://localhost:49134";
+const WORKSPACE_ROOT = process.cwd();
+
+const { registerFunction, trigger, triggerVoid } = init(
+  ENGINE_URL,
+  { workerName: "my-tools" }
+);
+
+// Tool 1: Read a file
+registerFunction(
+  {
+    id: "tool::file_read",
+    description: "Read file contents with path containment",
+    metadata: { category: "tool" },
+  },
+  async ({ path, maxBytes }: { path: string; maxBytes?: number }) => {
+    // Security: Ensure path is within workspace
+    const resolved = resolve(WORKSPACE_ROOT, path);
+    if (!resolved.startsWith(WORKSPACE_ROOT)) {
+      throw new Error(`Path traversal detected: ${path}`);
+    }
+
+    const content = await readFile(resolved, "utf-8");
+    const limited = maxBytes ? content.slice(0, maxBytes) : content;
+    
+    return {
+      content: limited,
+      path: resolved,
+      size: content.length,
+      truncated: maxBytes && content.length > maxBytes
+    };
+  }
+);
+
+// Tool 2: Write a file
+registerFunction(
+  {
+    id: "tool::file_write",
+    description: "Write file with path containment",
+    metadata: { category: "tool" },
+  },
+  async ({ path, content }: { path: string; content: string }) => {
+    const resolved = resolve(WORKSPACE_ROOT, path);
+    if (!resolved.startsWith(WORKSPACE_ROOT)) {
+      throw new Error(`Path traversal detected: ${path}`);
+    }
+
+    await writeFile(resolved, content, "utf-8");
+    return { written: true, path: resolved, size: content.length };
+  }
+);
+
+console.log("my-tools worker started");
+```
+
+### Rust Tool
+
+For performance-critical tools, use Rust:
+
+```rust crates/my-tools/src/main.rs
+use iii_sdk::iii::III;
+use iii_sdk::error::IIIError;
+use serde_json::{json, Value};
+use std::fs;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let iii = III::new("ws://localhost:49134");
+
+    // Tool: Fast file read
+    iii.register_function_with_description(
+        "tool::file_read_fast",
+        "High-performance file reading",
+        |input: Value| async move {
+            let path = input["path"].as_str()
+                .ok_or(IIIError::Handler("path required".into()))?;
+            
+            let content = fs::read_to_string(path)
+                .map_err(|e| IIIError::Handler(e.to_string()))?;
+            
+            Ok(json!({
+                "content": content,
+                "size": content.len()
+            }))
+        },
+    );
+
+    tracing::info!("my-tools worker started");
+    tokio::signal::ctrl_c().await?;
+    Ok(())
+}
+```
+
+## Tool with External API
+
+Example: Web search tool that calls an external API:
+
+```typescript src/tools.ts
+registerFunction(
+  {
+    id: "tool::web_search",
+    description: "Multi-provider web search",
+    metadata: { category: "tool" },
+  },
+  async ({
+    query,
+    provider,
+    maxResults,
+  }: {
+    query: string;
+    provider?: string;
+    maxResults?: number;
+  }) => {
+    const limit = maxResults || 5;
+
+    // Try Tavily API if available
+    if (provider === "tavily" && process.env.TAVILY_API_KEY) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      
+      try {
+        const resp = await fetch("https://api.tavily.com/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_key: process.env.TAVILY_API_KEY,
+            query,
+            max_results: limit,
+          }),
+          signal: controller.signal,
+        });
+        
+        const data = await resp.json() as any;
+        return { results: data.results || [], provider: "tavily" };
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    // Fallback to DuckDuckGo (no API key required)
+    const ddgResp = await fetch(
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`
+    );
+    const ddg = await ddgResp.json() as any;
+    
+    const results = (ddg.RelatedTopics || [])
+      .slice(0, limit)
+      .map((t: any) => ({
+        title: t.Text?.slice(0, 100),
+        url: t.FirstURL,
+        content: t.Text,
+      }));
+    
+    return { results, provider: "duckduckgo" };
+  }
+);
+```
+
+## Tool with Security Checks
+
+Example: Shell execution with allowlist:
+
+```typescript src/tools.ts
+const SHELL_COMMAND_ALLOWLIST = new Set([
+  "git", "node", "npm", "npx", "python3", "ls", "cat", "grep", "mkdir"
+]);
+
+registerFunction(
+  {
+    id: "tool::shell_exec",
+    description: "Execute command with sandbox (no shell interpretation)",
+    metadata: { category: "tool" },
+  },
+  async ({
+    argv,
+    cwd,
+    timeout,
+  }: {
+    argv: string[];
+    cwd?: string;
+    timeout?: number;
+  }) => {
+    if (!argv || argv.length === 0) {
+      throw new Error("argv must be a non-empty array");
+    }
+
+    const binary = path.basename(argv[0]);
+    if (!SHELL_COMMAND_ALLOWLIST.has(binary)) {
+      throw new Error(
+        `Command not allowed: ${argv[0]}. Allowed: ${[...SHELL_COMMAND_ALLOWLIST].join(", ")}`
+      );
+    }
+
+    const workDir = cwd ? resolve(WORKSPACE_ROOT, cwd) : WORKSPACE_ROOT;
+    if (!workDir.startsWith(WORKSPACE_ROOT)) {
+      throw new Error("Working directory must be within workspace");
+    }
+
+    try {
+      const { stdout, stderr } = await execFileAsync(argv[0], argv.slice(1), {
+        cwd: workDir,
+        timeout: timeout || 120_000,
+        maxBuffer: 1024 * 1024,
+      });
+
+      // Log to audit trail
+      triggerVoid("security::audit", {
+        type: "shell_exec",
+        detail: { argv, cwd: workDir, exitCode: 0 },
+      });
+
+      return {
+        stdout: stdout.slice(0, 100_000),
+        stderr: stderr.slice(0, 50_000),
+        exitCode: 0,
+      };
+    } catch (err: any) {
+      return {
+        stdout: (err.stdout || "").slice(0, 100_000),
+        stderr: (err.stderr || err.message || "").slice(0, 50_000),
+        exitCode: err.code || 1,
+      };
+    }
+  }
+);
+```
+
+## Tool with Metrics
+
+Wrap tool execution with metrics:
+
+```typescript src/tools.ts
+async function withToolMetrics<T>(
+  toolId: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const start = Date.now();
+  try {
+    const result = await fn();
+    
+    // Record success
+    triggerVoid("telemetry::record", {
+      metric: "tool_execution_total",
+      value: 1,
+      labels: { toolId, status: "success" },
+    });
+    
+    triggerVoid("telemetry::record", {
+      metric: "function_call_duration_ms",
+      value: Date.now() - start,
+      labels: { functionId: toolId, status: "success" },
+      type: "histogram",
+    });
+    
+    return result;
+  } catch (err) {
+    // Record failure
+    triggerVoid("telemetry::record", {
+      metric: "tool_execution_total",
+      value: 1,
+      labels: { toolId, status: "failure" },
+    });
+    
+    throw err;
+  }
+}
+
+registerFunction(
+  { id: "tool::my_tool", description: "Tool with metrics" },
+  async (input: any) => {
+    return withToolMetrics("tool::my_tool", async () => {
+      // Tool implementation
+      return { result: "success" };
+    });
+  }
+);
+```
+
+## Tool Parameter Validation
+
+Use TypeScript types or runtime validation:
+
+```typescript src/tools.ts
+interface FileReadParams {
+  path: string;
+  maxBytes?: number;
+  encoding?: "utf-8" | "base64";
+}
+
+function validateFileReadParams(params: any): FileReadParams {
+  if (typeof params.path !== "string" || params.path.trim() === "") {
+    throw new Error("path must be a non-empty string");
+  }
+  
+  if (params.maxBytes !== undefined) {
+    if (typeof params.maxBytes !== "number" || params.maxBytes <= 0) {
+      throw new Error("maxBytes must be a positive number");
+    }
+  }
+  
+  if (params.encoding && !["utf-8", "base64"].includes(params.encoding)) {
+    throw new Error("encoding must be 'utf-8' or 'base64'");
+  }
+  
+  return params as FileReadParams;
+}
+
+registerFunction(
+  { id: "tool::file_read_validated", description: "File read with validation" },
+  async (input: any) => {
+    const params = validateFileReadParams(input);
+    // Use params safely
+    const content = await readFile(params.path, params.encoding || "utf-8");
+    return { content };
+  }
+);
+```
+
+## Tool Composition
+
+Tools can call other tools:
+
+```typescript src/tools.ts
+registerFunction(
+  {
+    id: "tool::safe_web_fetch",
+    description: "Web fetch with security scanning",
+  },
+  async ({ url }: { url: string }) => {
+    // 1. Check URL against SSRF protection
+    const urlCheck: any = await trigger("security::check_url", { url }, 5_000);
+    if (!urlCheck.safe) {
+      throw new Error(`URL blocked: ${urlCheck.reason}`);
+    }
+
+    // 2. Fetch content
+    const resp = await fetch(url);
+    const content = await resp.text();
+
+    // 3. Scan content for malware
+    const contentScan: any = await trigger(
+      "security::scan_content",
+      { content },
+      10_000
+    );
+    if (!contentScan.safe) {
+      throw new Error(`Content blocked: ${contentScan.reason}`);
+    }
+
+    return { url, content, status: resp.status };
+  }
+);
+```
+
+## Configuring Agent Tool Access
+
+Agents declare which tools they can use in their configuration:
+
+### Allow All Tools
+
+```toml agents/my-agent/agent.toml
+[agent.capabilities]
+tools = ["*"]
+```
+
+### Allow Specific Prefixes
+
+```toml agents/my-agent/agent.toml
+[agent.capabilities]
+tools = ["tool::file_*", "tool::web_*", "memory::*"]
+```
+
+This allows:
+- `tool::file_read`, `tool::file_write`, `tool::file_list`
+- `tool::web_fetch`, `tool::web_search`
+- `memory::store`, `memory::recall`, `memory::search`
+
+### Explicit Tool List
+
+```toml agents/my-agent/agent.toml
+[agent.capabilities]
+tools = [
+  "tool::file_read",
+  "tool::web_search",
+  "memory::store"
+]
+```
+
+### Tool Profile
+
+Use pre-defined profiles:
+
+```toml agents/my-agent/agent.toml
+toolProfile = "code"  # Includes file_*, shell_exec, code_*
+```
+
+Available profiles:
+- `chat`: web_search, web_fetch, memory_recall, memory_store
+- `code`: file_*, shell_exec, code_*, apply_patch
+- `research`: web_*, browser_*, memory_*
+- `ops`: shell_exec, system_*, process_*, disk_*, network_*
+- `data`: json_*, csv_*, yaml_*, regex_*, file_*
+- `full`: All tools
+
+## Tool Approval Flow
+
+AgentOS supports approval gates for sensitive tools:
+
+```typescript src/tools.ts
+registerFunction(
+  {
+    id: "tool::destructive_action",
+    description: "Requires approval before execution",
+  },
+  async (input: any) => {
+    // This check happens automatically in agent-core before tool execution
+    // but you can also implement custom logic here
+    
+    const approval: any = await trigger("approval::check", {
+      agentId: input.agentId,
+      toolId: "tool::destructive_action",
+      arguments: input,
+    }, 10_000);
+    
+    if (!approval.approved) {
+      throw new Error(`Tool requires approval: ${approval.reason}`);
+    }
+    
+    // Execute destructive action
+    return { executed: true };
+  }
+);
+```
+
+See [Security & Approval](/essentials/security) for more on approval tiers.
+
+## Testing Tools
+
+### Unit Tests
+
+```typescript src/__tests__/tools.test.ts
+import { describe, it, expect, vi } from "vitest";
+import { readFile } from "fs/promises";
+
+// Mock fs
+vi.mock("fs/promises", () => ({
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
+}));
+
+describe("tool::file_read", () => {
+  it("should read file contents", async () => {
+    // Mock readFile
+    vi.mocked(readFile).mockResolvedValue("file content");
+    
+    const result = await fileReadHandler({ path: "/tmp/test.txt" });
+    
+    expect(result.content).toBe("file content");
+    expect(result.size).toBe(12);
+  });
+  
+  it("should reject path traversal", async () => {
+    await expect(
+      fileReadHandler({ path: "../../etc/passwd" })
+    ).rejects.toThrow("Path traversal detected");
+  });
+  
+  it("should truncate large files", async () => {
+    vi.mocked(readFile).mockResolvedValue("a".repeat(10000));
+    
+    const result = await fileReadHandler({ path: "/tmp/large.txt", maxBytes: 1000 });
+    
+    expect(result.content.length).toBe(1000);
+    expect(result.truncated).toBe(true);
+  });
+});
+```
+
+### Integration Tests
+
+```typescript src/__tests__/tools.integration.test.ts
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { init } from "iii-sdk";
+
+let trigger: any;
+
+beforeAll(async () => {
+  // Start test worker
+  const sdk = init("ws://localhost:49134", { workerName: "test" });
+  trigger = sdk.trigger;
+});
+
+describe("tool::file_read integration", () => {
+  it("should read actual file via engine", async () => {
+    const result = await trigger("tool::file_read", {
+      path: "test-fixtures/sample.txt"
+    }, 5000);
+    
+    expect(result.content).toContain("sample content");
+  });
+});
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Security First">
+    - Always validate input parameters
+    - Use allowlists for dangerous operations (shell commands, URLs)
+    - Check paths for traversal attacks
+    - Limit output size to prevent memory exhaustion
+    - Log all security-relevant actions to audit trail
+  </Step>
+
+  <Step title="Timeout Management">
+    Set appropriate timeouts for external calls:
+    
+    ```typescript
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    
+    try {
+      const resp = await fetch(url, { signal: controller.signal });
+      return await resp.json();
+    } finally {
+      clearTimeout(timer);
+    }
+    ```
+  </Step>
+
+  <Step title="Error Handling">
+    Return structured errors that agents can reason about:
+    
+    ```typescript
+    try {
+      // tool logic
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err.message,
+        code: err.code || "UNKNOWN",
+        recoverable: err.recoverable || false
+      };
+    }
+    ```
+  </Step>
+
+  <Step title="Resource Limits">
+    - Limit file sizes: `maxBytes` parameter
+    - Limit array lengths: `maxResults` parameter
+    - Limit execution time: timeouts
+    - Limit memory usage: streaming for large data
+  </Step>
+
+  <Step title="Idempotency">
+    Design tools to be idempotent when possible:
+    
+    ```typescript
+    // Good: Check if file exists before writing
+    const exists = await fileExists(path);
+    if (exists && !options.overwrite) {
+      return { written: false, reason: "file exists" };
+    }
+    await writeFile(path, content);
+    ```
+  </Step>
+</Steps>
+
+## Tool Categories
+
+Organize tools with metadata:
+
+```typescript
+registerFunction(
+  {
+    id: "tool::my_tool",
+    description: "My custom tool",
+    metadata: {
+      category: "integration",
+      version: "1.0",
+      author: "team@example.com",
+      requiresApproval: true,
+      tier: "async",  // auto, async, sync
+    },
+  },
+  handler
+);
+```
+
+Agents can filter tools by category using tool profiles.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Agents" icon="robot" href="/development/creating-agents">
+    Configure agents to use your custom tools
+  </Card>
+  <Card title="Security & Approval" icon="shield" href="/essentials/security">
+    Implement approval gates for sensitive tools
+  </Card>
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Write tests for your tools
+  </Card>
+  <Card title="Tool API Reference" icon="book" href="/api-reference/tools">
+    Full tool API documentation
+  </Card>
+</CardGroup>

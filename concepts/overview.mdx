@@ -1,0 +1,280 @@
+---
+title: Core Concepts Overview
+description: Learn about the three primitives that power AgentOS - Worker, Function, and Trigger
+---
+
+AgentOS is built on three simple primitives that work together to create a powerful, polyglot agent operating system.
+
+## The Three Primitives
+
+Every component in AgentOS is built using these three fundamental concepts:
+
+<CardGroup cols={3}>
+  <Card title="Worker" icon="microchip" href="/concepts/worker">
+    A process that connects to the iii-engine and registers functions
+  </Card>
+  <Card title="Function" icon="function" href="/concepts/function">
+    A callable unit of work with a unique ID and description
+  </Card>
+  <Card title="Trigger" icon="bolt" href="/concepts/trigger">
+    An event that invokes a function (HTTP, queue, cron, etc.)
+  </Card>
+</CardGroup>
+
+## How It Works
+
+Every component is a **Worker** that registers **Functions** and binds them to **Triggers**. Functions call each other via `trigger()` regardless of programming language.
+
+<Steps>
+  <Step title="Workers Connect">
+    Each worker connects to the iii-engine over WebSocket at `ws://localhost:49134`
+    
+    ```rust
+    let iii = III::new("ws://localhost:49134");
+    ```
+  </Step>
+
+  <Step title="Functions Register">
+    Workers register functions with unique IDs and descriptions
+    
+    ```rust
+    iii.register_function_with_description(
+        "agent::chat",
+        "Process a message through the agent loop",
+        move |input: Value| { /* handler */ },
+    );
+    ```
+  </Step>
+
+  <Step title="Triggers Bind">
+    Functions are bound to triggers (HTTP, queue, cron, etc.)
+    
+    ```rust
+    iii.register_trigger("queue", "agent::chat", json!({
+        "topic": "agent.inbox"
+    }))?;
+    ```
+  </Step>
+
+  <Step title="Functions Communicate">
+    Functions call each other using `trigger()` across languages
+    
+    ```rust
+    let result = iii.trigger("memory::recall", json!({
+        "agentId": &agent_id,
+        "query": &message,
+        "limit": 20,
+    })).await?;
+    ```
+  </Step>
+</Steps>
+
+## Real-World Example: Chat Flow
+
+Here's how a complete chat request flows through the system:
+
+```mermaid
+sequence
+  participant Client
+  participant API
+  participant Agent
+  participant Security
+  participant Memory
+  participant LLM
+  participant Tools
+  
+  Client->>API: POST /v1/chat/completions
+  API->>Agent: trigger("agent::chat")
+  Agent->>Security: trigger("security::check_capability")
+  Security-->>Agent: approved
+  Agent->>Memory: trigger("memory::recall")
+  Memory-->>Agent: past messages
+  Agent->>LLM: trigger("llm::route")
+  LLM-->>Agent: model selection
+  Agent->>LLM: trigger("llm::complete")
+  LLM-->>Agent: response with tool_calls
+  Agent->>Tools: trigger("tool::web_search")
+  Tools-->>Agent: search results
+  Agent->>LLM: trigger("llm::complete")
+  LLM-->>Agent: final response
+  Agent->>Memory: trigger("memory::store")
+  Agent-->>API: chat response
+  API-->>Client: JSON response
+```
+
+## Actual Code Example
+
+Here's the real code from the agent-core worker showing the complete flow:
+
+<CodeGroup>
+```rust Rust Agent Loop
+// From crates/agent-core/src/main.rs:103-169
+async fn agent_chat(iii: &III, req: ChatRequest) -> Result<Value, IIIError> {
+    // 1. Recall memories
+    let memories: Value = iii
+        .trigger("memory::recall", json!({
+            "agentId": &req.agent_id,
+            "query": &req.message,
+            "limit": 20,
+        }))
+        .await
+        .unwrap_or(json!([]));
+
+    // 2. Get available tools
+    let tools: Value = iii
+        .trigger("agent::list_tools", json!({ "agentId": &req.agent_id }))
+        .await
+        .unwrap_or(json!([]));
+
+    // 3. Route to appropriate model
+    let model: Value = iii
+        .trigger("llm::route", json!({
+            "message": &req.message,
+            "toolCount": tools.as_array().map(|a| a.len()).unwrap_or(0),
+        }))
+        .await
+        .map_err(|e| IIIError::Handler(e.to_string()))?;
+
+    // 4. Security scan
+    let scan_result = iii
+        .trigger("security::scan_injection", json!({ "text": &req.message }))
+        .await
+        .unwrap_or(json!({ "safe": true, "riskScore": 0.0 }));
+
+    // 5. Call LLM
+    let response: Value = iii
+        .trigger("llm::complete", json!({
+            "model": model,
+            "systemPrompt": system_prompt,
+            "messages": messages,
+            "tools": tools,
+        }))
+        .await
+        .map_err(|e| IIIError::Handler(e.to_string()))?;
+
+    // 6. Execute tool calls and iterate
+    while let Some(tool_calls) = response.get("toolCalls") {
+        // Execute each tool via trigger()
+        let result = iii.trigger(&tc.id, tc.arguments.clone()).await?;
+    }
+
+    Ok(response)
+}
+```
+
+```typescript TypeScript Worker
+// From src/agent-core.ts:710-831
+registerFunction(
+  {
+    id: "agent::chat",
+    description: "Process a message through the agent loop",
+  },
+  async (input: ChatRequest): Promise<ChatResponse> => {
+    // Prepare context
+    const config = await trigger("state::get", {
+      scope: "agents",
+      key: agentId,
+    });
+
+    const memories = await trigger("memory::recall", {
+      agentId,
+      query: message,
+      limit: 20,
+    });
+
+    const tools = await trigger("agent::list_tools", { agentId });
+
+    // Security checks
+    const capResult = await trigger("security::check_capability", {
+      agentId,
+      capability: tc.id.split("::")[0],
+      resource: tc.id,
+    });
+
+    // Execute LLM call
+    const response = await trigger("llm::complete", {
+      model,
+      systemPrompt,
+      messages,
+      tools,
+    });
+
+    return { content: response.content, model, usage, iterations };
+  },
+);
+```
+
+```python Python Worker
+# From workers/embedding/main.py:5-27
+iii = III(
+    "ws://localhost:49134",
+    worker_name="embedding",
+)
+
+@iii.function(
+    id="embedding::generate",
+    description="Generate text embeddings"
+)
+async def generate_embedding(input):
+    text = input.get("text", "")
+    batch = input.get("batch")
+
+    m = get_model()
+
+    if batch:
+        embeddings = m.encode(batch, normalize_embeddings=True)
+        return {
+            "embeddings": [e.tolist() for e in embeddings],
+            "dim": embeddings.shape[1],
+        }
+
+    embedding = m.encode([text], normalize_embeddings=True)[0]
+    return {"embedding": embedding.tolist(), "dim": len(embedding)}
+```
+</CodeGroup>
+
+## Key Benefits
+
+<CardGroup cols={2}>
+  <Card title="No Vendor Lock-in" icon="unlock">
+    Every capability is a plain function. No frameworks, no magic.
+  </Card>
+  <Card title="Polyglot by Design" icon="language">
+    Write workers in Rust, TypeScript, or Python. They all communicate seamlessly.
+  </Card>
+  <Card title="Hot-Swappable" icon="arrows-rotate">
+    Replace any function without touching other components.
+  </Card>
+  <Card title="Testable" icon="vial">
+    Every function can be tested independently. 2,506 tests across all languages.
+  </Card>
+</CardGroup>
+
+## Architecture Layers
+
+AgentOS is structured in layers, each implemented as workers:
+
+<Note>
+Every layer connects to the same iii-engine bus. There's no special hierarchy - just functions calling functions.
+</Note>
+
+| Layer | Languages | Purpose | Example Workers |
+|-------|-----------|---------|----------------|
+| **Hot Path** | Rust | Performance-critical operations | agent-core, memory, llm-router, security, wasm-sandbox |
+| **Control Plane** | Rust | Multi-tenant orchestration | realm, hierarchy, directive, mission, ledger, council, pulse, bridge |
+| **Application** | TypeScript | Iteration speed, integrations | api, tools, workflows, swarm, knowledge-graph, session-replay |
+| **ML** | Python | Machine learning workloads | embedding (SentenceTransformers) |
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Workers" icon="microchip" href="/concepts/worker">
+    Learn how to create workers in Rust, TypeScript, and Python
+  </Card>
+  <Card title="Functions" icon="function" href="/concepts/function">
+    Deep dive into function registration and invocation
+  </Card>
+  <Card title="Triggers" icon="bolt" href="/concepts/trigger">
+    Explore HTTP, queue, cron, and pubsub triggers
+  </Card>
+</CardGroup>

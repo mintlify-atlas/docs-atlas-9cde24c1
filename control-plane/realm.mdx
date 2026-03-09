@@ -1,0 +1,360 @@
+---
+title: 'Realm'
+description: 'Multi-tenant isolation domains with export/import capabilities'
+---
+
+The **Realm** crate provides complete multi-tenant isolation. Each realm is an independent environment with its own agents, directives, budgets, and governance.
+
+## Overview
+
+- **Purpose:** Multi-tenant isolation with export/import
+- **LOC:** ~280
+- **Functions:** 7 (create, get, list, update, delete, export, import)
+- **Endpoints:** 7 REST
+- **Source:** `crates/realm/src/main.rs`
+
+## Core Concepts
+
+### Realm Structure
+
+```rust
+struct Realm {
+    id: String,              // "realm-{uuid}"
+    name: String,
+    description: Option<String>,
+    status: RealmStatus,     // Active, Paused, Archived
+    owner: String,
+    default_model: Option<String>,
+    max_agents: Option<u32>,
+    metadata: Option<Value>,
+    created_at: String,
+    updated_at: String,
+}
+```
+
+### Status Lifecycle
+
+```
+Active → Paused → Active
+  ↓
+Archived (terminal)
+```
+
+## Functions
+
+### realm::create
+
+Create a new isolated realm.
+
+<ParamField path="name" type="string" required>
+  Display name for the realm
+</ParamField>
+
+<ParamField path="description" type="string">
+  Optional description
+</ParamField>
+
+<ParamField path="owner" type="string" required>
+  Owner identifier (user or system)
+</ParamField>
+
+<ParamField path="defaultModel" type="string">
+  Default LLM model for agents (e.g., "claude-sonnet-4")
+</ParamField>
+
+<ParamField path="maxAgents" type="number">
+  Maximum agents allowed in this realm
+</ParamField>
+
+<ParamField path="metadata" type="object">
+  Arbitrary metadata
+</ParamField>
+
+**Example:**
+
+```rust
+let realm = iii.trigger("realm::create", json!({
+    "name": "production",
+    "description": "Production environment",
+    "owner": "admin",
+    "defaultModel": "claude-sonnet-4",
+    "maxAgents": 100,
+    "metadata": { "region": "us-east-1" }
+})).await?;
+
+// Returns:
+// {
+//   "id": "realm-a1b2c3d4",
+//   "name": "production",
+//   "status": "Active",
+//   "owner": "admin",
+//   ...
+// }
+```
+
+**REST Endpoint:**
+```bash
+POST /api/realms
+Content-Type: application/json
+
+{
+  "name": "production",
+  "owner": "admin",
+  "defaultModel": "claude-sonnet-4"
+}
+```
+
+**Implementation Detail:** Publishes `realm.lifecycle` event with type `created`.
+
+### realm::get
+
+Retrieve realm by ID.
+
+```rust
+let realm = iii.trigger("realm::get", json!({
+    "id": "realm-a1b2c3d4"
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+GET /api/realms/realm-a1b2c3d4
+```
+
+### realm::list
+
+List all realms.
+
+```rust
+let realms = iii.trigger("realm::list", json!({})).await?;
+// Returns array of realm objects
+```
+
+**REST Endpoint:**
+```bash
+GET /api/realms
+```
+
+### realm::update
+
+Update realm configuration.
+
+```rust
+let updated = iii.trigger("realm::update", json!({
+    "id": "realm-a1b2c3d4",
+    "status": "Paused",
+    "maxAgents": 150
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+PATCH /api/realms/realm-a1b2c3d4
+Content-Type: application/json
+
+{
+  "status": "Paused",
+  "maxAgents": 150
+}
+```
+
+### realm::delete
+
+Delete a realm and all its data.
+
+<Warning>
+  This is a destructive operation. All agents, directives, missions, and budgets in the realm will be deleted.
+</Warning>
+
+```rust
+let result = iii.trigger("realm::delete", json!({
+    "id": "realm-a1b2c3d4"
+})).await?;
+// Returns: { "deleted": true }
+```
+
+**REST Endpoint:**
+```bash
+DELETE /api/realms/realm-a1b2c3d4
+```
+
+### realm::export
+
+Export realm as portable template with secret scrubbing.
+
+<ParamField path="id" type="string" required>
+  Realm ID to export
+</ParamField>
+
+<ParamField path="scrubSecrets" type="boolean" default={true}>
+  Remove sensitive data from export
+</ParamField>
+
+**Example:**
+
+```rust
+let export = iii.trigger("realm::export", json!({
+    "id": "realm-a1b2c3d4",
+    "scrubSecrets": true
+})).await?;
+
+// Returns:
+// {
+//   "version": "1.0",
+//   "realm": { ... },
+//   "agents": [ ... ],
+//   "directives": [ ... ],
+//   "hierarchy": [ ... ]
+// }
+```
+
+**REST Endpoint:**
+```bash
+POST /api/realms/realm-a1b2c3d4/export
+Content-Type: application/json
+
+{
+  "scrubSecrets": true
+}
+```
+
+**Implementation Detail from realm/src/main.rs:118-152:**
+
+```rust
+async fn export_realm(iii: &III, req: ExportRequest) -> Result<Value, IIIError> {
+    let realm = get_realm(iii, &req.id).await?;
+    let scrub = req.scrub_secrets.unwrap_or(true);
+
+    let agents = iii
+        .trigger("state::list", json!({ "scope": format!("realm:{}:agents", req.id) }))
+        .await
+        .unwrap_or(json!([]));
+
+    let directives = iii
+        .trigger("state::list", json!({ "scope": format!("realm:{}:directives", req.id) }))
+        .await
+        .unwrap_or(json!([]));
+
+    let hierarchy = iii
+        .trigger("state::list", json!({ "scope": format!("realm:{}:hierarchy", req.id) }))
+        .await
+        .unwrap_or(json!([]));
+
+    let mut export = json!({
+        "version": "1.0",
+        "realm": realm,
+        "agents": agents,
+        "directives": directives,
+        "hierarchy": hierarchy,
+    });
+
+    if scrub {
+        if let Some(obj) = export.as_object_mut() {
+            obj.remove("secrets");
+        }
+    }
+
+    Ok(export)
+}
+```
+
+### realm::import
+
+Import realm from exported template.
+
+<ParamField path="data" type="object" required>
+  Export data from realm::export
+</ParamField>
+
+<ParamField path="newOwner" type="string">
+  Override owner for imported realm
+</ParamField>
+
+**Example:**
+
+```rust
+let result = iii.trigger("realm::import", json!({
+    "data": export_data,
+    "newOwner": "new-admin"
+})).await?;
+
+// Returns:
+// {
+//   "imported": true,
+//   "realmId": "realm-x9y8z7"
+// }
+```
+
+**REST Endpoint:**
+```bash
+POST /api/realms/import
+Content-Type: application/json
+
+{
+  "data": { ... },
+  "newOwner": "new-admin"
+}
+```
+
+## Storage Scopes
+
+Realm uses these state scopes:
+
+- `realms` - Realm metadata
+- `realm:{id}:agents` - Agents in realm
+- `realm:{id}:directives` - Directives
+- `realm:{id}:hierarchy` - Org structure
+
+## Events
+
+Realm publishes to `realm.lifecycle` topic:
+
+```json
+{
+  "type": "created" | "updated" | "deleted",
+  "realmId": "realm-a1b2c3d4"
+}
+```
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Multi-Tenancy" icon="users">
+    Isolate customer environments with separate realms per customer.
+  </Card>
+  <Card title="Environment Separation" icon="layer-group">
+    Create dev, staging, and production realms with different configurations.
+  </Card>
+  <Card title="Team Workspaces" icon="people-group">
+    Give each team their own isolated agent workspace.
+  </Card>
+  <Card title="Realm Templates" icon="clone">
+    Export a configured realm and import it multiple times for rapid provisioning.
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Use descriptive names">
+    Name realms clearly: `customer-acme-prod`, `team-eng-dev`
+  </Step>
+  
+  <Step title="Set maxAgents">
+    Prevent runaway agent spawning by setting reasonable limits
+  </Step>
+  
+  <Step title="Archive, don't delete">
+    Set status to `Archived` instead of deleting for audit trails
+  </Step>
+  
+  <Step title="Always scrub secrets">
+    When exporting, keep `scrubSecrets: true` to prevent credential leaks
+  </Step>
+</Steps>
+
+## Related
+
+- [Hierarchy](/control-plane/hierarchy) - Build org structures within realms
+- [Directive](/control-plane/directive) - Create realm-level goals
+- [Ledger](/control-plane/ledger) - Set per-realm budgets

@@ -1,0 +1,349 @@
+---
+title: "CLI Overview"
+description: "Command-line interface for AgentOS - manage agents, workflows, security, and system configuration"
+---
+
+The AgentOS CLI (`agentos`) provides a comprehensive command-line interface for managing every aspect of your agent operating system. From spawning agents to configuring security policies, the CLI gives you complete control over your AgentOS deployment.
+
+## Installation
+
+Install AgentOS with a single command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iii-hq/agentos/main/scripts/install.sh | sh
+```
+
+This installs both `iii-engine` (dependency) and `agentos` binary to `~/.local/bin`.
+
+### Installation Options
+
+```bash
+# Install a specific version
+AGENTOS_VERSION=v0.1.0 curl -fsSL ... | sh
+
+# Custom install directory
+BIN_DIR=/usr/local/bin curl -fsSL ... | sh
+```
+
+## Quick Start
+
+Initialize and start AgentOS:
+
+```bash
+# Initialize with quick setup
+agentos init --quick
+
+# Set your API key
+agentos config set-key anthropic $ANTHROPIC_API_KEY
+
+# Start the engine
+agentos start
+
+# Chat with the default agent
+agentos chat default
+```
+
+## Command Groups
+
+The CLI is organized into logical command groups:
+
+<CardGroup cols={2}>
+  <Card title="Agent Commands" icon="robot" href="/cli/agent-commands">
+    Create, list, chat with, and manage agents
+  </Card>
+  <Card title="Workflow Commands" icon="diagram-project" href="/cli/workflow-commands">
+    Create and execute multi-step workflows
+  </Card>
+  <Card title="Config Commands" icon="gear" href="/cli/config-commands">
+    Manage configuration and LLM models
+  </Card>
+  <Card title="Security Commands" icon="shield" href="/cli/security-commands">
+    Audit trails, approvals, vault, and session management
+  </Card>
+</CardGroup>
+
+## System Commands
+
+### init
+
+Initialize AgentOS configuration and directories.
+
+```bash
+agentos init [--quick]
+```
+
+<ParamField path="--quick" type="boolean">
+  Skip interactive prompts and use defaults
+</ParamField>
+
+Creates the following directories in `~/.agentos/`:
+- `data/` - Runtime data storage
+- `skills/` - Installed skills
+- `agents/` - Agent definitions
+- `logs/` - System logs
+- `state/` - State storage
+
+### start
+
+Start the AgentOS engine and all workers.
+
+```bash
+agentos start
+```
+
+Starts services on:
+- **Engine**: `ws://localhost:49134`
+- **HTTP API**: `http://localhost:3111`
+- **Streams**: `ws://localhost:3112`
+- **Metrics**: `http://localhost:9464`
+
+### stop
+
+Stop all AgentOS workers and the engine.
+
+```bash
+agentos stop
+```
+
+### status
+
+Display system status including worker count and uptime.
+
+```bash
+agentos status [--json]
+```
+
+<ParamField path="--json" type="boolean">
+  Output status in JSON format
+</ParamField>
+
+**Example output:**
+```
+● agentos v0.1.0
+  Workers: 18
+  Uptime:  3600s
+```
+
+### health
+
+Check system health.
+
+```bash
+agentos health [--json]
+```
+
+<ParamField path="--json" type="boolean">
+  Output health check in JSON format
+</ParamField>
+
+### doctor
+
+Diagnose system issues and optionally repair them.
+
+```bash
+agentos doctor [--json] [--repair]
+```
+
+<ParamField path="--json" type="boolean">
+  Output diagnostics in JSON format
+</ParamField>
+
+<ParamField path="--repair" type="boolean">
+  Attempt to repair detected issues
+</ParamField>
+
+Checks:
+- Engine connectivity
+- Worker status
+- State directory integrity
+- Configuration validity
+
+## Interactive Commands
+
+### chat
+
+Start an interactive chat session with an agent.
+
+```bash
+agentos chat [agent]
+```
+
+<ParamField path="agent" type="string">
+  Agent ID to chat with (defaults to "default")
+</ParamField>
+
+Type `exit` or `quit` to end the session.
+
+### message
+
+Send a single message to an agent.
+
+```bash
+agentos message <agent> <text> [--json]
+```
+
+<ParamField path="agent" type="string" required>
+  Agent ID to message
+</ParamField>
+
+<ParamField path="text" type="string" required>
+  Message text to send
+</ParamField>
+
+<ParamField path="--json" type="boolean">
+  Output response in JSON format
+</ParamField>
+
+**Example:**
+```bash
+agentos message coder "Review the API changes in src/api.ts"
+```
+
+## Utility Commands
+
+### tui
+
+Launch the terminal UI dashboard (21 screens).
+
+```bash
+agentos tui
+```
+
+Provides interactive screens for:
+- Dashboard, Agents, Chat, Channels, Skills
+- Hands, Workflows, Sessions, Approvals, Logs
+- Memory, Audit, Security, Peers, Extensions
+- Triggers, Templates, Usage, Settings, Wizard
+
+### dashboard
+
+Open the web dashboard in your browser.
+
+```bash
+agentos dashboard
+```
+
+### logs
+
+View or stream system logs.
+
+```bash
+agentos logs [--lines N] [--follow]
+```
+
+<ParamField path="--lines" type="number" default="50">
+  Number of log lines to display
+</ParamField>
+
+<ParamField path="--follow" type="boolean">
+  Stream logs in real-time (like `tail -f`)
+</ParamField>
+
+### completion
+
+Generate shell completion scripts.
+
+```bash
+agentos completion <shell>
+```
+
+<ParamField path="shell" type="string" required>
+  Shell type: `bash`, `zsh`, `fish`, or `powershell`
+</ParamField>
+
+**Example setup:**
+```bash
+# Bash
+agentos completion bash > /etc/bash_completion.d/agentos
+
+# Zsh
+agentos completion zsh > ~/.zsh/completion/_agentos
+
+# Fish
+agentos completion fish > ~/.config/fish/completions/agentos.fish
+```
+
+### onboard
+
+Interactive onboarding wizard.
+
+```bash
+agentos onboard [--quick]
+```
+
+<ParamField path="--quick" type="boolean">
+  Use defaults and skip interactive prompts
+</ParamField>
+
+Walks you through:
+1. Directory setup
+2. API key configuration
+3. Default model selection
+4. Initial configuration
+
+### reset
+
+Factory reset - clears all AgentOS state.
+
+```bash
+agentos reset [--confirm]
+```
+
+<ParamField path="--confirm" type="boolean" required>
+  Required flag to confirm reset operation
+</ParamField>
+
+<Warning>
+  This operation is **irreversible**. All agents, workflows, sessions, and configuration will be deleted.
+</Warning>
+
+### mcp
+
+Start MCP (Model Context Protocol) server mode.
+
+```bash
+agentos mcp
+```
+
+Runs AgentOS as an MCP server, enabling integration with MCP-compatible tools.
+
+## Getting Help
+
+Get help for any command:
+
+```bash
+agentos --help
+agentos agent --help
+agentos config set --help
+```
+
+## Environment Variables
+
+<ParamField path="AGENTOS_API_URL" type="string" default="http://localhost:3111">
+  Override the default API base URL
+</ParamField>
+
+<ParamField path="ANTHROPIC_API_KEY" type="string">
+  Anthropic API key for Claude models
+</ParamField>
+
+<ParamField path="OPENAI_API_KEY" type="string">
+  OpenAI API key for GPT models
+</ParamField>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agent Commands" icon="robot" href="/cli/agent-commands">
+    Learn how to create and manage agents
+  </Card>
+  <Card title="Security Commands" icon="shield" href="/cli/security-commands">
+    Set up audit trails and security policies
+  </Card>
+  <Card title="Configuration" icon="gear" href="/cli/config-commands">
+    Configure API keys and model settings
+  </Card>
+  <Card title="Workflows" icon="diagram-project" href="/cli/workflow-commands">
+    Create multi-step automated workflows
+  </Card>
+</CardGroup>

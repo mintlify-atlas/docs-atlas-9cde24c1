@@ -1,0 +1,525 @@
+---
+title: Social Media Platform Adapters
+description: Connect agents to Bluesky, Reddit, Twitch, LinkedIn, Mastodon, and more
+---
+
+AgentOS supports **9 social media platforms** for community engagement, content automation, and social listening. Each adapter handles platform-specific APIs, rate limits, and authentication flows.
+
+## Bluesky
+
+Decentralized social network using the AT Protocol.
+
+### Setup
+
+<Steps>
+  <Step title="Create Account">
+    Register at [bsky.app](https://bsky.app)
+  </Step>
+  
+  <Step title="Generate App Password">
+    Settings → App Passwords → Create New
+  </Step>
+  
+  <Step title="Store Credentials">
+    ```bash
+    agentos vault set BLUESKY_HANDLE "your-handle.bsky.social"
+    agentos vault set BLUESKY_PASSWORD "your-app-password"
+    ```
+  </Step>
+  
+  <Step title="Enable Channel">
+    ```bash
+    agentos channel enable bluesky
+    agentos channel test bluesky
+    ```
+  </Step>
+</Steps>
+
+### Features
+
+- AT Protocol native integration
+- Reply threading support
+- Session JWT caching
+- Message splitting (300 char limit)
+- DID-based agent routing
+
+### Implementation
+
+Source: `src/channels/bluesky.ts:1`
+
+```typescript
+registerFunction(
+  { id: "channel::bluesky::webhook" },
+  async (req) => {
+    const { did, text, uri, cid } = req.body;
+    
+    // Skip self-mentions
+    if (did === session?.did) return { ok: true };
+    
+    const agentId = await resolveAgent(trigger, "bluesky", did);
+    const response = await trigger("agent::chat", {
+      agentId,
+      message: text,
+      sessionId: `bluesky:${did}`
+    });
+    
+    // Reply to original post
+    await sendMessage(response.content, { uri, cid });
+  }
+);
+```
+
+### API Endpoints
+
+- Authentication: `com.atproto.server.createSession`
+- Post creation: `com.atproto.repo.createRecord`
+- Collection: `app.bsky.feed.post`
+
+---
+
+## Reddit
+
+Community engagement and subreddit automation.
+
+### Setup
+
+<Steps>
+  <Step title="Create Reddit App">
+    Go to [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps)
+    - Create app (type: script)
+    - Note client ID and secret
+  </Step>
+  
+  <Step title="Get Refresh Token">
+    Use OAuth2 flow to obtain refresh token
+  </Step>
+  
+  <Step title="Store Credentials">
+    ```bash
+    agentos vault set REDDIT_CLIENT_ID "your-client-id"
+    agentos vault set REDDIT_SECRET "your-client-secret"
+    agentos vault set REDDIT_REFRESH_TOKEN "your-refresh-token"
+    ```
+  </Step>
+</Steps>
+
+### Features
+
+- OAuth2 token refresh
+- Subreddit-based routing
+- Comment reply support
+- Automatic token caching
+- Deleted message filtering
+
+Source: `src/channels/reddit.ts:1`
+
+### Token Refresh
+
+```typescript
+async function refreshAccessToken() {
+  const res = await fetch("https://www.reddit.com/api/v1/access_token", {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(
+        `${clientId}:${clientSecret}`
+      ).toString("base64")}`
+    },
+    body: `grant_type=refresh_token&refresh_token=${refreshToken}`
+  });
+  accessToken = (await res.json()).access_token;
+}
+```
+
+---
+
+## Twitch
+
+Live streaming chat integration.
+
+### Setup
+
+<Steps>
+  <Step title="Register Application">
+    Go to [dev.twitch.tv/console](https://dev.twitch.tv/console)
+    - Register new application
+    - Set OAuth Redirect URL
+  </Step>
+  
+  <Step title="Get Tokens">
+    Use OAuth2 flow to obtain:
+    - Access token
+    - Client ID
+  </Step>
+  
+  <Step title="Store Credentials">
+    ```bash
+    agentos vault set TWITCH_TOKEN "your-access-token"
+    agentos vault set TWITCH_CLIENT_ID "your-client-id"
+    ```
+  </Step>
+  
+  <Step title="Subscribe to EventSub">
+    Subscribe to `channel.chat.message` events
+  </Step>
+</Steps>
+
+### Features
+
+- EventSub webhook integration
+- Challenge-response verification
+- Chat message API
+- Broadcaster-based routing
+- Message splitting (500 char limit)
+
+Source: `src/channels/twitch.ts:1`
+
+### Webhook Verification
+
+```typescript
+if (body.challenge) {
+  // EventSub challenge response
+  return { status_code: 200, body: body.challenge };
+}
+```
+
+---
+
+## LinkedIn
+
+Professional networking and messaging.
+
+### Setup
+
+<Steps>
+  <Step title="Create LinkedIn App">
+    Go to [linkedin.com/developers](https://www.linkedin.com/developers)
+    - Create new app
+    - Request messaging permissions
+  </Step>
+  
+  <Step title="OAuth2 Flow">
+    Obtain access token with `w_member_social` scope
+  </Step>
+  
+  <Step title="Store Credentials">
+    ```bash
+    agentos vault set LINKEDIN_TOKEN "your-access-token"
+    ```
+  </Step>
+</Steps>
+
+### Features
+
+- LinkedIn Messaging API v2
+- Thread-based conversations
+- Voyager event handling
+- Message splitting (4,096 char limit)
+
+Source: `src/channels/linkedin.ts:1`
+
+### Message Format
+
+```typescript
+const msgEvent = element.event[
+  "com.linkedin.voyager.messaging.event.MessageEvent"
+];
+const text = msgEvent.messageBody?.text || msgEvent.attributedBody?.text;
+```
+
+---
+
+## Mastodon
+
+Federated social media network.
+
+### Setup
+
+<Steps>
+  <Step title="Choose Instance">
+    Select a Mastodon instance (e.g., `mastodon.social`)
+  </Step>
+  
+  <Step title="Create Application">
+    In instance settings:
+    - Development → New Application
+    - Scopes: `read`, `write`
+    - Copy access token
+  </Step>
+  
+  <Step title="Store Credentials">
+    ```bash
+    agentos vault set MASTODON_INSTANCE "https://mastodon.social"
+    agentos vault set MASTODON_TOKEN "your-access-token"
+    ```
+  </Step>
+</Steps>
+
+### Features
+
+- Mastodon API v1 integration
+- Reply threading
+- HTML content stripping
+- Message splitting (500 char limit)
+- Thread chain building
+
+Source: `src/channels/mastodon.ts:1`
+
+### Thread Handling
+
+```typescript
+let replyId = inReplyToId;
+for (const chunk of chunks) {
+  const res = await postStatus(chunk, replyId);
+  replyId = res.id; // Chain subsequent messages
+}
+```
+
+---
+
+## Additional Social Platforms
+
+<CardGroup cols={2}>
+  <Card title="Nostr" icon="bolt">
+    Decentralized protocol for social media
+    
+    **Setup:**
+    ```bash
+    agentos vault set NOSTR_PRIVATE_KEY "nsec..."
+    ```
+    
+    Source: `src/channels/nostr.ts:1`
+  </Card>
+  
+  <Card title="Discourse" icon="discourse">
+    Forum and community discussions
+    
+    **Setup:**
+    ```bash
+    agentos vault set DISCOURSE_URL "https://forum.example.com"
+    agentos vault set DISCOURSE_API_KEY "..."
+    ```
+    
+    Source: `src/channels/discourse.ts:1`
+  </Card>
+  
+  <Card title="Gitter" icon="github">
+    Developer community chat
+    
+    **Setup:**
+    ```bash
+    agentos vault set GITTER_TOKEN "..."
+    ```
+    
+    Source: `src/channels/gitter.ts:1`
+  </Card>
+  
+  <Card title="Keybase" icon="key">
+    Encrypted social platform
+    
+    **Setup:**
+    ```bash
+    agentos vault set KEYBASE_USERNAME "..."
+    agentos vault set KEYBASE_PAPER_KEY "..."
+    ```
+    
+    Source: `src/channels/keybase.ts:1`
+  </Card>
+</CardGroup>
+
+---
+
+## Social Media Bot Example
+
+Create an agent that responds across multiple social platforms:
+
+```yaml
+# agents/social-bot.yaml
+id: social-bot
+name: Social Media Assistant
+description: Multi-platform social engagement bot
+model: claude-sonnet-4
+temperature: 0.7
+instructions: |
+  You are a friendly social media bot. Respond to:
+  - Questions about our product
+  - Community engagement
+  - Support requests
+  
+  Keep responses:
+  - Concise (under 280 chars when possible)
+  - Friendly and professional
+  - On-brand
+```
+
+### Deploy Across Platforms
+
+```bash
+# Configure credentials
+agentos vault set BLUESKY_HANDLE "bot.bsky.social"
+agentos vault set BLUESKY_PASSWORD "..."
+agentos vault set REDDIT_CLIENT_ID "..."
+agentos vault set MASTODON_TOKEN "..."
+agentos vault set LINKEDIN_TOKEN "..."
+
+# Enable channels
+agentos channel enable bluesky
+agentos channel enable reddit
+agentos channel enable mastodon
+agentos channel enable linkedin
+
+# Test each platform
+agentos channel test bluesky
+agentos channel test reddit
+agentos channel test mastodon
+agentos channel test linkedin
+```
+
+---
+
+## Rate Limits
+
+Each platform has different rate limits:
+
+| Platform | Rate Limit | Handled By |
+|----------|-----------|------------|
+| Bluesky | 300 posts/5min | AT Protocol server |
+| Reddit | 60 requests/min | OAuth token refresh |
+| Twitch | 20 messages/30sec | Twitch API |
+| LinkedIn | 100 requests/day | LinkedIn API |
+| Mastodon | Instance-specific | Instance configuration |
+
+AgentOS includes per-agent rate limiting:
+
+```bash
+# View rate limit status
+agentos agent inspect social-bot | grep rate_limit
+```
+
+---
+
+## Message Formatting
+
+### Character Limits
+
+```typescript
+// Platform-specific limits (from source code)
+Bluesky:   splitMessage(text, 300)   // bluesky.ts:78
+Mastodon:  splitMessage(text, 500)   // mastodon.ts:56
+Twitch:    splitMessage(text, 500)   // twitch.ts:65
+LinkedIn:  splitMessage(text, 4096)  // linkedin.ts:66
+Reddit:    No splitting (10,000 char limit)
+```
+
+### HTML Stripping
+
+Mastodon returns HTML content that must be stripped:
+
+```typescript
+const text = status.content.replace(/<[^>]+>/g, "");
+```
+
+---
+
+## Monitoring Social Channels
+
+```bash
+# View social media activity
+agentos logs --follow | grep -E "bluesky|reddit|twitch|linkedin|mastodon"
+
+# Audit trail for social engagement
+agentos security audit --type channel_message | grep social
+
+# Per-platform metrics
+agentos dashboard  # View channel activity in TUI
+```
+
+---
+
+## Authentication Patterns
+
+### Session-Based (Bluesky)
+
+```typescript
+let session: { accessJwt: string; did: string } | null = null;
+
+async function authenticate() {
+  const res = await fetch(`${API_URL}/com.atproto.server.createSession`, {
+    method: "POST",
+    body: JSON.stringify({ identifier: handle, password })
+  });
+  session = await res.json();
+}
+```
+
+### Token Refresh (Reddit)
+
+```typescript
+let accessToken = "";
+
+async function refreshAccessToken() {
+  // OAuth2 token refresh flow
+  const res = await fetch(tokenUrl, { /* ... */ });
+  accessToken = (await res.json()).access_token;
+}
+
+if (!accessToken) await refreshAccessToken();
+```
+
+### Static Token (Mastodon, LinkedIn)
+
+```typescript
+const token = await getSecret("MASTODON_TOKEN");
+await fetch(apiUrl, {
+  headers: { Authorization: `Bearer ${token}` }
+});
+```
+
+---
+
+## Security Considerations
+
+### Platform-Specific
+
+- **Bluesky**: DID-based identity, session JWT rotation
+- **Reddit**: OAuth2 with refresh tokens, Basic auth for token endpoint
+- **Twitch**: EventSub signature verification, challenge-response
+- **LinkedIn**: OAuth2 scopes, X-Restli-Protocol-Version header
+- **Mastodon**: Instance-specific moderation, federated identity
+
+### Audit Events
+
+All social media interactions are logged:
+
+```typescript
+triggerVoid("security::audit", {
+  type: "channel_message",
+  agentId,
+  detail: { 
+    channel: "bluesky", 
+    did: "did:plc:...",
+    timestamp: Date.now()
+  }
+});
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Messaging Platforms" icon="comments" href="/channels/messaging">
+    Set up Telegram, Discord, Slack, WhatsApp
+  </Card>
+  
+  <Card title="Custom Adapters" icon="code" href="/channels/custom">
+    Build your own social media adapter
+  </Card>
+  
+  <Card title="Rate Limiting" icon="gauge" href="/security/rate-limiting">
+    Configure per-agent rate limits
+  </Card>
+  
+  <Card title="Audit Logging" icon="clipboard-list" href="/security/audit">
+    Monitor social media activity
+  </Card>
+</CardGroup>

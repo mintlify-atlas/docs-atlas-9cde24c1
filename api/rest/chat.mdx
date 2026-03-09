@@ -1,0 +1,246 @@
+---
+title: Chat Completions API
+description: OpenAI-compatible chat completions endpoint for agent conversations
+---
+
+The chat completions endpoint provides OpenAI-compatible API access to AgentOS agents. This allows you to integrate AgentOS with any tool that supports the OpenAI API format.
+
+## Endpoint
+
+```
+POST /v1/chat/completions
+```
+
+## Request
+
+<ParamField path="model" type="string" default="claude-sonnet-4-6">
+  The model to use for completion. Supports all 25 LLM providers and 47 models available in AgentOS.
+</ParamField>
+
+<ParamField path="messages" type="array" required>
+  Array of message objects in OpenAI format.
+  
+  <Expandable title="Message Object">
+    <ParamField path="role" type="string" required>
+      The role of the message author: `system`, `user`, or `assistant`.
+    </ParamField>
+    
+    <ParamField path="content" type="string" required>
+      The content of the message.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="temperature" type="number">
+  Sampling temperature (0-2). Higher values make output more random.
+</ParamField>
+
+<ParamField path="max_tokens" type="number">
+  Maximum number of tokens to generate.
+</ParamField>
+
+<ParamField path="stream" type="boolean" default={false}>
+  Whether to stream responses. Currently processes through the `default` agent.
+</ParamField>
+
+## Response
+
+<ResponseField name="id" type="string">
+  Unique identifier for the chat completion (format: `chatcmpl-xxxxxxxx`).
+</ResponseField>
+
+<ResponseField name="object" type="string">
+  Always `"chat.completion"`.
+</ResponseField>
+
+<ResponseField name="created" type="number">
+  Unix timestamp of when the completion was created.
+</ResponseField>
+
+<ResponseField name="model" type="string">
+  The model used for the completion.
+</ResponseField>
+
+<ResponseField name="choices" type="array">
+  Array of completion choices.
+  
+  <Expandable title="Choice Object">
+    <ResponseField name="index" type="number">
+      The index of the choice (always 0 for single completions).
+    </ResponseField>
+    
+    <ResponseField name="message" type="object">
+      The generated message.
+      
+      <Expandable title="Message Object">
+        <ResponseField name="role" type="string">
+          Always `"assistant"`.
+        </ResponseField>
+        
+        <ResponseField name="content" type="string">
+          The content of the assistant's message.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="finish_reason" type="string">
+      Reason for completion: `"stop"`, `"length"`, or `"content_filter"`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="usage" type="object">
+  Token usage information.
+  
+  <Expandable title="Usage Object">
+    <ResponseField name="prompt_tokens" type="number">
+      Number of tokens in the prompt.
+    </ResponseField>
+    
+    <ResponseField name="completion_tokens" type="number">
+      Number of tokens in the completion.
+    </ResponseField>
+    
+    <ResponseField name="total_tokens" type="number">
+      Total tokens used (prompt + completion).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST http://localhost:3111/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-6",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What can you help me with?"
+      }
+    ]
+  }'
+```
+
+```python Python
+import openai
+
+client = openai.OpenAI(
+    base_url="http://localhost:3111/v1",
+    api_key="YOUR_API_KEY"
+)
+
+response = client.chat.completions.create(
+    model="claude-sonnet-4-6",
+    messages=[
+        {"role": "user", "content": "What can you help me with?"}
+    ]
+)
+
+print(response.choices[0].message.content)
+```
+
+```typescript TypeScript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:3111/v1',
+  apiKey: 'YOUR_API_KEY'
+});
+
+const response = await client.chat.completions.create({
+  model: 'claude-sonnet-4-6',
+  messages: [
+    { role: 'user', content: 'What can you help me with?' }
+  ]
+});
+
+console.log(response.choices[0].message.content);
+```
+
+```javascript Node.js
+const fetch = require('node-fetch');
+
+const response = await fetch('http://localhost:3111/v1/chat/completions', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer YOUR_API_KEY',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    model: 'claude-sonnet-4-6',
+    messages: [
+      { role: 'user', content: 'What can you help me with?' }
+    ]
+  })
+});
+
+const data = await response.json();
+console.log(data.choices[0].message.content);
+```
+
+</CodeGroup>
+
+## Response Example
+
+```json
+{
+  "id": "chatcmpl-a3f2b1c4",
+  "object": "chat.completion",
+  "created": 1709856000,
+  "model": "claude-sonnet-4-6",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "I can help you with a wide range of tasks including:\n\n- Answering questions and providing information\n- Writing and editing code\n- Analyzing data and files\n- Searching the web\n- Managing workflows\n- And much more!\n\nWhat would you like assistance with?"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 15,
+    "completion_tokens": 87,
+    "total_tokens": 102
+  }
+}
+```
+
+## Implementation Details
+
+The endpoint:
+
+1. Extracts the last message from the `messages` array
+2. Routes it to the `default` agent via `agent::chat` function
+3. Creates a unique session ID with format `api:{timestamp}`
+4. Returns the response in OpenAI-compatible format
+
+The actual agent processing includes:
+
+- Security capability checks
+- Memory recall and storage
+- LLM routing based on model selection
+- Tool execution (60+ tools available)
+- Loop guard protection
+- Session replay recording
+
+## Rate Limiting
+
+Chat completions are limited to **60 requests per hour** per IP address.
+
+## Supported Models
+
+AgentOS supports 47 models across 25 providers. Some examples:
+
+- Anthropic: `claude-opus-4`, `claude-sonnet-4-6`, `claude-haiku-4`
+- OpenAI: `gpt-4o`, `gpt-4o-mini`, `o1`, `o3-mini`
+- Google: `gemini-2.0-flash`, `gemini-2.0-pro`
+- DeepSeek: `deepseek-v3`, `deepseek-r1`
+- And many more...
+
+See the full list with `agentos models list`.

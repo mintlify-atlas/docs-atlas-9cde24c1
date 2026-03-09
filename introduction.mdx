@@ -1,0 +1,179 @@
+---
+title: "Introduction"
+description: "Agent Operating System built on three primitives: Worker, Function, Trigger"
+---
+
+<div className="relative overflow-hidden rounded-lg border border-[rgba(255,255,255,0.1)] bg-[rgba(0,0,0,0.85)] p-8 shadow-[0_4px_12px_rgba(255,215,0,0.3)]">
+  <h1 className="text-5xl font-bold mb-4" style={{ color: '#eec112' }}>AgentOS</h1>
+  <p className="text-xl text-[#CCCCCC] mb-6">
+    Agent Operating System built on three primitives: Worker, Function, Trigger
+  </p>
+  <div className="flex gap-4">
+    <a href="/installation" className="inline-flex items-center px-6 py-3 rounded-md font-semibold" style={{ backgroundColor: '#d4af1a', color: '#000000' }}>
+      Get Started
+    </a>
+    <a href="https://github.com/iii-hq/agentos" className="inline-flex items-center px-6 py-3 rounded-md font-semibold border" style={{ borderColor: '#d4af1a', color: '#d4af1a' }}>
+      View on GitHub
+    </a>
+  </div>
+</div>
+
+## What is AgentOS?
+
+AgentOS is a comprehensive agent operating system that provides a complete foundation for building, deploying, and managing AI agents. Built on the [iii-engine](https://iii.dev), it offers:
+
+- **60+ tools** across file operations, web, code, data, and more
+- **2,506 tests** ensuring reliability and stability
+- **25 LLM providers** with intelligent routing
+- **47 models** from Anthropic, OpenAI, Google, AWS Bedrock, and more
+- **40 channels** for multi-platform agent deployment
+- **32K LOC** of production-ready code in Rust, TypeScript, and Python
+
+Every capability — agents, memory, security, LLM routing, workflows, tools, swarms, knowledge graphs, session replay, vault — is a plain function registered on an iii-engine bus. No frameworks, no vendor lock-in, no magic.
+
+## Architecture
+
+AgentOS is **polyglot by design** — Rust for hot path performance, TypeScript for rapid iteration, Python for ML workloads.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                        iii-engine                            │
+│              Worker · Function · Trigger                     │
+├──────────┬───────────┬───────────┬───────────┬───────────────┤
+│ agent    │ security  │    llm    │  memory   │     wasm      │
+│ core     │  rbac     │  router   │  store    │    sandbox    │
+│ workflow │  audit    │ 25 LLMs   │  session  │   (wasmtime)  │
+│ api      │  taint    │  catalog  │  recall   │    (Rust)     │
+│ hand     │  sign     │   (Rust)  │  (Rust)   │               │
+│ (Rust)   │  (Rust)   │           │           │               │
+├──────────┴───────────┴───────────┴───────────┴───────────────┤
+│                   Control Plane (Rust)                       │
+│  realm · hierarchy · directive · mission · ledger            │
+│  council · pulse · bridge (8 crates, 45 functions)           │
+├──────────────────────────────────────────────────────────────┤
+│  api · workflows · tools(60+) · skills · channels · hooks    │
+│  approval · streaming · mcp · a2a · vault · browser · swarm  │
+│  knowledge-graph · session-replay · skillkit · tool-profiles │
+│                      (TypeScript)                            │
+├──────────────────────────────────────────────────────────────┤
+│                    embedding (Python)                        │
+├──────────────────────────────────────────────────────────────┤
+│     CLI (Rust)              TUI (Rust/ratatui)               │
+├──────────────────────────────────────────────────────────────┤
+│ 45 agents · 7 hands · 25 integrations · 40 channels          │
+│ 8 tool profiles · 47 models · 21 TUI screens                 │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## Core Features
+
+<CardGroup cols={2}>
+  <Card title="Worker-Function-Trigger" icon="cubes" href="/concepts/overview">
+    Three simple primitives for building distributed agent systems
+  </Card>
+  <Card title="60+ Built-in Tools" icon="wrench" href="/tools/overview">
+    File ops, web scraping, code analysis, data processing, and more
+  </Card>
+  <Card title="25 LLM Providers" icon="brain" href="/api/llm/providers">
+    Intelligent routing across Anthropic, OpenAI, Google, and 22 others
+  </Card>
+  <Card title="Multi-Agent Swarms" icon="users" href="/advanced/swarms">
+    Coordinate multiple agents for complex tasks
+  </Card>
+  <Card title="Enterprise Security" icon="shield" href="/security/overview">
+    RBAC, audit chain, sandboxing, vault encryption
+  </Card>
+  <Card title="Control Plane" icon="server" href="/control-plane/overview">
+    Multi-tenant isolation, hierarchies, budgets, governance
+  </Card>
+  <Card title="40 Channel Adapters" icon="comments" href="/channels/overview">
+    Deploy agents to Slack, Discord, Telegram, and 37+ platforms
+  </Card>
+  <Card title="Knowledge Graph" icon="diagram-project" href="/advanced/knowledge-graph">
+    Entity-relation graphs for structured knowledge
+  </Card>
+</CardGroup>
+
+## Quick Example
+
+Here's how to create and chat with an agent in 3 commands:
+
+<CodeGroup>
+
+```bash Installation
+curl -fsSL https://raw.githubusercontent.com/iii-hq/agentos/main/scripts/install.sh | sh
+```
+
+```bash Setup
+agentos init --quick
+agentos config set-key anthropic $ANTHROPIC_API_KEY
+agentos start
+```
+
+```bash Chat
+agentos chat default
+```
+
+</CodeGroup>
+
+## Key Capabilities
+
+<AccordionGroup>
+  <Accordion title="Tools & Skills">
+    60+ built-in tools across 8 categories: file operations, web, code, shell, data, memory, scheduling, collaboration, media, knowledge graph, inter-agent, system, utility, and database. Plus integration with SkillKit marketplace for 15,000+ additional skills.
+  </Accordion>
+  
+  <Accordion title="LLM Routing">
+    Intelligent routing to 25 LLM providers with 47 models. Complexity-based model selection, cost optimization, and fallback handling built-in.
+  </Accordion>
+  
+  <Accordion title="Security">
+    Fail-closed security gates, RBAC, Merkle audit chain, taint tracking, Ed25519 signing, Docker/WASM sandboxing, prompt injection detection, rate limiting, loop guards, and AES-256-GCM vault.
+  </Accordion>
+  
+  <Accordion title="Control Plane">
+    8 Rust crates providing realm isolation, agent hierarchies, directive alignment, mission management, budget enforcement, governance proposals, scheduled invocation, and external runtime adapters.
+  </Accordion>
+  
+  <Accordion title="Multi-Platform Deployment">
+    40 channel adapters enable deployment to Telegram, Discord, Slack, WhatsApp, Email, Teams, IRC, Matrix, Bluesky, Reddit, and 30+ other platforms.
+  </Accordion>
+  
+  <Accordion title="Developer Experience">
+    CLI with 50+ commands, 21-screen TUI dashboard, 45 agent templates, 7 autonomous hands, 25 MCP integrations, migration tools for LangChain/OpenClaw, and comprehensive testing (2,506 tests).
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install AgentOS and dependencies
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running in minutes
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/overview">
+    Learn Worker, Function, Trigger
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Explore 50+ CLI commands
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/rust/agent-core">
+    Browse the API documentation
+  </Card>
+  <Card title="Examples" icon="lightbulb" href="/templates/agents">
+    View 45+ agent templates
+  </Card>
+</CardGroup>
+
+## Community
+
+<CardGroup cols={2}>
+  <Card title="GitHub" icon="github" href="https://github.com/iii-hq/agentos">
+    Star us on GitHub and contribute
+  </Card>
+  <Card title="iii-engine" icon="cube" href="https://iii.dev">
+    Learn more about the underlying engine
+  </Card>
+</CardGroup>

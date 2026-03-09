@@ -1,0 +1,607 @@
+---
+title: "Code Tools"
+description: "Analyze, format, lint, test, and explain code across TypeScript, Python, Rust, and more"
+---
+
+AgentOS provides 5 code tools for multi-language software development, including static analysis, formatting, linting, test execution, and AI-powered explanations.
+
+## Available Tools
+
+### code_analyze
+
+Analyze code complexity metrics (lines, functions, classes).
+
+<ParamField path="filePath" type="string" required>
+  Path to source file
+</ParamField>
+
+<ResponseField name="path" type="string">
+  Resolved absolute path
+</ResponseField>
+
+<ResponseField name="totalLines" type="number">
+  Total lines in file
+</ResponseField>
+
+<ResponseField name="codeLines" type="number">
+  Lines of code (excluding blank lines and comments)
+</ResponseField>
+
+<ResponseField name="blankLines" type="number">
+  Number of blank lines
+</ResponseField>
+
+<ResponseField name="comments" type="number">
+  Number of comment lines
+</ResponseField>
+
+<ResponseField name="functions" type="number">
+  Function/method count
+</ResponseField>
+
+<ResponseField name="classes" type="number">
+  Class count
+</ResponseField>
+
+<ResponseField name="extension" type="string">
+  File extension (e.g., ".ts", ".py", ".rs")
+</ResponseField>
+
+**Example:**
+
+```typescript
+const result = await trigger("tool::code_analyze", {
+  filePath: "src/tools.ts"
+});
+
+// => {
+//   path: "/workspace/src/tools.ts",
+//   totalLines: 606,
+//   codeLines: 512,
+//   blankLines: 48,
+//   comments: 46,
+//   functions: 22,
+//   classes: 0,
+//   extension: ".ts"
+// }
+```
+
+**Language Support:**
+
+- **TypeScript/JavaScript** — Detects `function`, `const fn = ()`, `async function`
+- **Python** — Detects `def`, `async def`, `class`
+- **Rust** — Generic pattern matching (future: tree-sitter AST parsing)
+
+**Implementation:**
+
+```typescript
+// src/tools-extended.ts:831-880
+const functionPattern =
+  ext === ".py"
+    ? /^\s*(def|async\s+def)\s+\w+/
+    : /^\s*(function|const\s+\w+\s*=\s*(async\s+)?\(|async\s+\w+\s*\(|export\s+(async\s+)?function)/;
+
+const classPattern =
+  ext === ".py" ? /^\s*class\s+\w+/ : /^\s*(class|export\s+class)\s+\w+/;
+
+for (const line of lines) {
+  const trimmed = line.trim();
+  if (trimmed === "") blankLines++;
+  else if (
+    trimmed.startsWith("//") ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("/*") ||
+    trimmed.startsWith("*")
+  )
+    comments++;
+  if (functionPattern.test(line)) functions++;
+  if (classPattern.test(line)) classes++;
+}
+```
+
+---
+
+### code_format
+
+Format code using language-specific formatters.
+
+<ParamField path="filePath" type="string" required>
+  Path to source file
+</ParamField>
+
+<ParamField path="formatter" type="string">
+  Explicit formatter: `"prettier"`, `"black"`, `"rustfmt"` (auto-detected by extension)
+</ParamField>
+
+<ResponseField name="formatted" type="boolean">
+  `true` if formatting succeeded
+</ResponseField>
+
+<ResponseField name="path" type="string">
+  Formatted file path
+</ResponseField>
+
+<ResponseField name="output" type="string">
+  Formatter stdout/stderr output
+</ResponseField>
+
+**Example:**
+
+```typescript
+const result = await trigger("tool::code_format", {
+  filePath: "src/index.ts"
+});
+
+// => {
+//   formatted: true,
+//   path: "/workspace/src/index.ts",
+//   output: "src/index.ts 42ms"
+// }
+```
+
+**Formatter Selection:**
+
+| Extension | Formatter | Command |
+|-----------|-----------|--------|
+| `.ts`, `.js`, `.json`, `.md` | Prettier | `npx prettier --write {file}` |
+| `.py` | Black | `python3 -m black {file}` |
+| `.rs` | rustfmt | `rustfmt {file}` |
+
+**Requirements:**
+
+- **Prettier** — Installed via `npm install -D prettier`
+- **Black** — Installed via `pip install black`
+- **rustfmt** — Included with Rust toolchain (`rustup component add rustfmt`)
+
+**Implementation:**
+
+```typescript
+// src/tools-extended.ts:883-923
+let cmd: string;
+let args: string[];
+
+if (formatter === "rustfmt" || ext === ".rs") {
+  cmd = "rustfmt";
+  args = [resolved];
+} else if (formatter === "black" || ext === ".py") {
+  cmd = "python3";
+  args = ["-m", "black", resolved];
+} else {
+  cmd = "npx";
+  args = ["prettier", "--write", resolved];
+}
+
+const { stdout, stderr } = await execFileAsync(cmd, args, {
+  cwd: WORKSPACE_ROOT,
+  timeout: 30_000,
+  maxBuffer: 512 * 1024,
+  env: safeEnv(),
+});
+```
+
+---
+
+### code_lint
+
+Lint code using language-specific linters.
+
+<ParamField path="filePath" type="string" required>
+  Path to source file
+</ParamField>
+
+<ParamField path="linter" type="string">
+  Explicit linter: `"eslint"`, `"pylint"`, `"clippy"` (auto-detected by extension)
+</ParamField>
+
+<ResponseField name="path" type="string">
+  Linted file path
+</ResponseField>
+
+<ResponseField name="output" type="string">
+  Linter output (JSON format if available)
+</ResponseField>
+
+<ResponseField name="exitCode" type="number">
+  Exit code (0 = no issues, >0 = issues found)
+</ResponseField>
+
+**Example:**
+
+```typescript
+const result = await trigger("tool::code_lint", {
+  filePath: "src/api.ts"
+});
+
+// => {
+//   path: "/workspace/src/api.ts",
+//   output: '[{"ruleId":"no-unused-vars","severity":2,"message":"..."}]',
+//   exitCode: 1
+// }
+```
+
+**Linter Selection:**
+
+| Extension | Linter | Command |
+|-----------|--------|--------|
+| `.ts`, `.js` | ESLint | `npx eslint --format=json {file}` |
+| `.py` | Pylint | `python3 -m pylint --output-format=json {file}` |
+| `.rs` | Clippy | `cargo clippy --message-format=json` |
+
+**Parsing Linter Output:**
+
+```typescript
+const result = await trigger("tool::code_lint", {
+  filePath: "src/api.ts"
+});
+
+if (result.exitCode === 0) {
+  console.log("No linting issues!");
+} else {
+  const issues = JSON.parse(result.output);
+  for (const issue of issues) {
+    console.log(`${issue.ruleId}: ${issue.message}`);
+  }
+}
+```
+
+---
+
+### code_test
+
+Run tests using a specified test command.
+
+<ParamField path="command" type="string[]" required>
+  Test command as array (e.g., `["npm", "test"]`)
+</ParamField>
+
+<ParamField path="cwd" type="string">
+  Working directory for test execution
+</ParamField>
+
+<ParamField path="timeout" type="number">
+  Timeout in milliseconds (default: 120,000 = 2 minutes)
+</ParamField>
+
+<ResponseField name="stdout" type="string">
+  Test output (stdout)
+</ResponseField>
+
+<ResponseField name="stderr" type="string">
+  Test errors (stderr)
+</ResponseField>
+
+<ResponseField name="exitCode" type="number">
+  Exit code (0 = all tests passed)
+</ResponseField>
+
+**Example:**
+
+```typescript
+const result = await trigger("tool::code_test", {
+  command: ["npm", "test"],
+  cwd: ".",
+  timeout: 60000
+});
+
+if (result.exitCode === 0) {
+  console.log("All tests passed!");
+  console.log(result.stdout);
+} else {
+  console.error("Tests failed:");
+  console.error(result.stderr);
+}
+```
+
+**Supported Test Runners:**
+
+| Language | Test Runner | Command Example |
+|----------|-------------|----------------|
+| TypeScript/JavaScript | Vitest | `["npx", "vitest", "--run"]` |
+| TypeScript/JavaScript | Jest | `["npm", "test"]` |
+| Python | pytest | `["python3", "-m", "pytest"]` |
+| Rust | cargo test | `["cargo", "test"]` |
+| Go | go test | `["go", "test", "./..."]` |
+
+**Allowed Test Commands:**
+
+```typescript
+// src/tools-extended.ts:995-1006
+const ALLOWED_TEST_COMMANDS = new Set([
+  "npm", "npx", "bun", "deno", "node",
+  "python3", "python",
+  "cargo", "go", "make"
+]);
+
+const binary = path.basename(command[0]);
+if (!ALLOWED_TEST_COMMANDS.has(binary)) {
+  throw new Error(
+    `Test command not allowed: ${command[0]}. Allowed: ${[...ALLOWED_TEST_COMMANDS].join(", ")}`
+  );
+}
+```
+
+---
+
+### code_explain
+
+Explain code using LLM analysis.
+
+<ParamField path="filePath" type="string" required>
+  Path to source file
+</ParamField>
+
+<ParamField path="question" type="string">
+  Specific question about the code (optional)
+</ParamField>
+
+<ResponseField name="path" type="string">
+  Analyzed file path
+</ResponseField>
+
+<ResponseField name="explanation" type="string">
+  LLM-generated explanation
+</ResponseField>
+
+**Example:**
+
+```typescript
+const result = await trigger("tool::code_explain", {
+  filePath: "src/security-map.ts",
+  question: "How does the HMAC verification prevent timing attacks?"
+});
+
+console.log(result.explanation);
+// => "The code uses timingSafeEqual() for HMAC comparison, which ensures
+//     constant-time execution regardless of input values. This prevents
+//     attackers from using timing analysis to deduce the correct HMAC..."
+```
+
+**Implementation:**
+
+```typescript
+// src/tools-extended.ts:1044-1067
+const content = await readFile(resolved, "utf-8");
+const truncated = content.slice(0, 50_000);  // Limit to 50KB
+
+const prompt = question
+  ? `Explain this code, focusing on: ${question}\n\n\`\`\`\n${truncated}\n\`\`\``
+  : `Explain what this code does:\n\n\`\`\`\n${truncated}\n\`\`\``;
+
+const result = await trigger("agent::chat", {
+  agentId: "default",
+  message: prompt
+});
+
+return { path: resolved, explanation: result.content };
+```
+
+**Best Use Cases:**
+
+- Understanding unfamiliar codebases
+- Documenting complex algorithms
+- Onboarding new developers
+- Security code reviews
+
+---
+
+## Multi-Language Support
+
+### TypeScript/JavaScript
+
+```typescript
+// Format with Prettier
+await trigger("tool::code_format", { filePath: "src/index.ts" });
+
+// Lint with ESLint
+const lint = await trigger("tool::code_lint", { filePath: "src/index.ts" });
+
+// Run tests with Vitest
+const test = await trigger("tool::code_test", {
+  command: ["npx", "vitest", "--run"]
+});
+```
+
+### Python
+
+```typescript
+// Format with Black
+await trigger("tool::code_format", { filePath: "main.py" });
+
+// Lint with Pylint
+const lint = await trigger("tool::code_lint", { filePath: "main.py" });
+
+// Run tests with pytest
+const test = await trigger("tool::code_test", {
+  command: ["python3", "-m", "pytest", "tests/"]
+});
+```
+
+### Rust
+
+```typescript
+// Format with rustfmt
+await trigger("tool::code_format", { filePath: "src/main.rs" });
+
+// Lint with Clippy
+const lint = await trigger("tool::code_lint", { filePath: "src/main.rs" });
+
+// Run tests with cargo
+const test = await trigger("tool::code_test", {
+  command: ["cargo", "test", "--", "--nocapture"]
+});
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always format before committing">
+    Run formatter before git commits to maintain code style:
+    
+    ```typescript
+    // Pre-commit hook
+const files = ["src/index.ts", "src/utils.ts"];
+    for (const file of files) {
+      await trigger("tool::code_format", { filePath: file });
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Use code_analyze for complexity tracking">
+    Track code metrics over time:
+    
+    ```typescript
+    const metrics = await trigger("tool::code_analyze", {
+      filePath: "src/agent-core.ts"
+    });
+    
+    if (metrics.functions > 50) {
+      console.warn("Consider splitting this file into modules");
+    }
+    
+    const complexity = metrics.codeLines / metrics.functions;
+    console.log(`Average function size: ${complexity} lines`);
+    ```
+  </Accordion>
+
+  <Accordion title="Parse linter output for automation">
+    Automate linter result processing:
+    
+    ```typescript
+    const lint = await trigger("tool::code_lint", {
+      filePath: "src/api.ts"
+    });
+    
+    if (lint.exitCode !== 0) {
+      const issues = JSON.parse(lint.output);
+      const errors = issues.filter(i => i.severity === 2);
+      
+      if (errors.length > 0) {
+        throw new Error(`${errors.length} linting errors must be fixed`);
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Set appropriate test timeouts">
+    Adjust timeouts based on test suite size:
+    
+    ```typescript
+    // Unit tests: 30s
+    await trigger("tool::code_test", {
+      command: ["npm", "test", "--", "unit"],
+      timeout: 30000
+    });
+    
+    // Integration tests: 5min
+    await trigger("tool::code_test", {
+      command: ["npm", "test", "--", "integration"],
+      timeout: 300000
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Patterns
+
+### CI/CD Pipeline
+
+```typescript
+// Format, lint, test pipeline
+const file = "src/tools.ts";
+
+// 1. Format
+console.log("Formatting...");
+await trigger("tool::code_format", { filePath: file });
+
+// 2. Lint
+console.log("Linting...");
+const lint = await trigger("tool::code_lint", { filePath: file });
+if (lint.exitCode !== 0) {
+  console.error("Linting failed:", lint.output);
+  process.exit(1);
+}
+
+// 3. Test
+console.log("Testing...");
+const test = await trigger("tool::code_test", {
+  command: ["npm", "test"]
+});
+if (test.exitCode !== 0) {
+  console.error("Tests failed:", test.stderr);
+  process.exit(1);
+}
+
+console.log("✅ All checks passed!");
+```
+
+### Code Review Assistant
+
+```typescript
+// Analyze code before review
+const metrics = await trigger("tool::code_analyze", {
+  filePath: "src/new-feature.ts"
+});
+
+const explanation = await trigger("tool::code_explain", {
+  filePath: "src/new-feature.ts",
+  question: "What are the potential security concerns?"
+});
+
+const report = {
+  metrics,
+  complexity: (metrics.codeLines / metrics.functions).toFixed(1),
+  securityReview: explanation.explanation
+};
+
+console.log(JSON.stringify(report, null, 2));
+```
+
+### Refactoring Workflow
+
+```typescript
+// Before refactoring
+const before = await trigger("tool::code_analyze", {
+  filePath: "src/legacy.ts"
+});
+
+// Perform refactoring (manual or automated)
+// ...
+
+// After refactoring
+const after = await trigger("tool::code_analyze", {
+  filePath: "src/legacy.ts"
+});
+
+console.log(`Functions: ${before.functions} → ${after.functions}`);
+console.log(`Code lines: ${before.codeLines} → ${after.codeLines}`);
+console.log(`Complexity reduced: ${(
+  (before.codeLines / before.functions) -
+  (after.codeLines / after.functions)
+).toFixed(1)} lines/function`);
+```
+
+## Error Handling
+
+```typescript
+try {
+  await trigger("tool::code_format", { filePath: "src/syntax-error.ts" });
+} catch (err) {
+  console.error("Formatting failed:", err.message);
+  // Handle syntax errors gracefully
+}
+
+try {
+  const result = await trigger("tool::code_test", {
+    command: ["invalid-command"]
+  });
+} catch (err) {
+  console.error(err.message);
+  // "Test command not allowed: invalid-command. Allowed: npm, npx, ..."
+}
+```
+
+## Related Tools
+
+- **[File Operations](/tools/file-operations)** — Read and write source files
+- **[Shell Execution](/tools/overview#shell-execution)** — Run build commands
+- **[Git Tools](/tools/overview#utility)** — Version control integration

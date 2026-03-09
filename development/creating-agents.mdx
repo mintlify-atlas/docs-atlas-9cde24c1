@@ -1,0 +1,638 @@
+---
+title: "Creating Agents"
+description: "Create custom AI agents with specialized capabilities, system prompts, and tool access"
+---
+
+## Overview
+
+Agents in AgentOS are defined by a TOML configuration file that specifies their model, system prompt, capabilities, resource limits, and persona. AgentOS includes **45 pre-built agent templates** across 9 divisions.
+
+<Info>
+  **Agent = Configuration + ReAct Loop**
+  
+  Agents use the ReAct (Reasoning + Acting) pattern to process messages, call tools, and generate responses. Configuration determines which tools they can access and how they behave.
+</Info>
+
+## Agent Templates
+
+AgentOS provides 45 agent templates ready to use:
+
+| Division | Agents | Examples |
+|----------|--------|----------|
+| **Engineering** | 8 | coder, architect, code-reviewer, test-engineer, debugger |
+| **Research** | 5 | researcher, analyst, data-scientist, trend-researcher |
+| **Ops** | 3 | devops-lead, ops, security-auditor |
+| **Content** | 6 | doc-writer, writer, translator, content-creator |
+| **Business** | 8 | orchestrator, planner, sales-assistant, customer-support |
+| **Personal** | 7 | assistant, health-tracker, personal-finance, tutor |
+| **Creative** | 4 | ux-architect, brand-guardian, image-prompt-engineer |
+| **Specialized** | 4 | evidence-collector, reality-checker, feedback-synthesizer |
+
+View all templates:
+
+```bash
+agentos agent list
+ls agents/
+```
+
+## Agent Structure
+
+An agent is a directory containing `agent.toml`:
+
+```
+agents/
+├── my-agent/
+│   ├── agent.toml       # Agent configuration
+│   └── README.md        # Optional documentation
+├── coder/
+│   └── agent.toml
+└── researcher/
+    └── agent.toml
+```
+
+## Creating from Template
+
+Use a template as a starting point:
+
+```bash
+# Create from template
+agentos agent new my-agent --template coder
+
+# Or copy manually
+cp -r agents/hello-world agents/my-agent
+cd agents/my-agent
+vim agent.toml
+```
+
+## Agent Configuration Format
+
+### Minimal Configuration
+
+```toml agents/my-agent/agent.toml
+[agent]
+name = "my-agent"
+description = "A custom agent for my use case"
+module = "builtin:chat"
+
+[agent.model]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+max_tokens = 4096
+
+[agent.capabilities]
+tools = ["*"]
+
+ system_prompt = """
+You are a helpful assistant.
+"""
+
+tags = ["custom"]
+```
+
+### Full Configuration
+
+From `agents/coder/agent.toml`:
+
+```toml agents/coder/agent.toml
+[agent]
+name = "coder"
+description = "Full-stack software engineer that writes, refactors, and ships production-quality code"
+module = "builtin:chat"
+
+[agent.model]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+max_tokens = 4096
+
+[agent.capabilities]
+tools = ["tool::*"]
+memory_scopes = ["self.*", "shared.*"]
+network_hosts = ["*"]
+
+[agent.resources]
+max_tokens_per_hour = 500000
+
+system_prompt = """
+You are a senior software engineer. Write clean, tested, production-ready code following established patterns in the codebase. Always consider edge cases, error handling, and performance implications.
+"""
+
+tags = ["coding", "engineering", "development"]
+
+[persona]
+division = "engineering"
+communication_style = "Direct and technical. Explains trade-offs concisely and prefers showing code over describing it."
+critical_rules = [
+  "Always write tests for new functionality",
+  "Never skip error handling",
+  "Follow existing codebase conventions",
+  "Keep PRs focused and reviewable"
+]
+
+[persona.workflow]
+phases = ["Analyze", "Plan", "Implement", "Test", "Refactor"]
+
+[persona.success_metrics]
+metrics = [
+  "Code coverage >80%",
+  "Zero P0 bugs in production",
+  "PR merge time <24h"
+]
+
+[persona.learning]
+patterns = [
+  "Successful refactoring approaches",
+  "Common failure modes by language",
+  "Performance optimization techniques"
+]
+```
+
+## Configuration Reference
+
+### `[agent]` Section
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Agent identifier (used in CLI and API) |
+| `description` | string | Yes | Human-readable description |
+| `module` | string | Yes | Always `"builtin:chat"` for ReAct agents |
+
+### `[agent.model]` Section
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `provider` | string | Yes | LLM provider: `anthropic`, `openai`, `google`, etc. |
+| `model` | string | Yes | Model name: `claude-sonnet-4-6`, `gpt-4o`, etc. |
+| `max_tokens` | integer | Yes | Maximum tokens per request |
+| `temperature` | float | No | Sampling temperature (0.0-1.0) |
+
+### `[agent.capabilities]` Section
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `tools` | array | Yes | Tool access patterns (see below) |
+| `memory_scopes` | array | No | Memory scope patterns: `["self.*", "shared.*"]` |
+| `network_hosts` | array | No | Allowed network hosts: `["*"]`, `["api.example.com"]` |
+
+#### Tool Access Patterns
+
+```toml
+# Allow all tools
+tools = ["*"]
+
+# Allow specific prefixes
+tools = ["tool::file_*", "tool::web_*", "memory::*"]
+
+# Explicit tool list
+tools = [
+  "tool::file_read",
+  "tool::file_write",
+  "tool::web_search",
+  "memory::store",
+  "memory::recall"
+]
+```
+
+### `[agent.resources]` Section
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `max_tokens_per_hour` | integer | No | Hourly token budget (enforced by ledger) |
+| `max_tokens_per_day` | integer | No | Daily token budget |
+| `max_concurrent_requests` | integer | No | Max parallel requests (default: 5) |
+
+### System Prompt
+
+Multi-line string defining agent behavior:
+
+```toml
+system_prompt = """
+You are a [role]. 
+
+[Key behaviors and constraints]
+
+[Output format requirements]
+"""
+```
+
+<Warning>
+  System prompts are critical. Be specific about:
+  - Role and expertise
+  - Output format
+  - Constraints and rules
+  - When to use which tools
+</Warning>
+
+### Tags
+
+Array of tags for discovery and filtering:
+
+```toml
+tags = ["coding", "production", "senior"]
+```
+
+### `[persona]` Section (Optional)
+
+Defines agent personality and behavior patterns:
+
+```toml
+[persona]
+division = "engineering"  # personal, business, ops, research, creative
+communication_style = "Direct and technical"
+critical_rules = [
+  "Always write tests",
+  "Never skip error handling"
+]
+
+[persona.workflow]
+phases = ["Analyze", "Plan", "Implement", "Test", "Deploy"]
+
+[persona.success_metrics]
+metrics = ["Code coverage >80%", "Zero P0 bugs"]
+
+[persona.learning]
+patterns = ["Common failure modes", "Optimization techniques"]
+```
+
+## Creating an Agent
+
+### Step 1: Create Directory
+
+```bash
+mkdir -p agents/my-agent
+cd agents/my-agent
+```
+
+### Step 2: Write Configuration
+
+```toml agent.toml
+[agent]
+name = "sql-expert"
+description = "Database specialist for query optimization and schema design"
+module = "builtin:chat"
+
+[agent.model]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+max_tokens = 4096
+
+[agent.capabilities]
+tools = [
+  "tool::file_read",
+  "tool::web_search",
+  "db::query",
+  "db::explain",
+  "db::schema"
+]
+
+[agent.resources]
+max_tokens_per_hour = 100000
+
+system_prompt = """
+You are a senior database engineer specializing in PostgreSQL and MySQL.
+
+When analyzing queries:
+1. Use EXPLAIN ANALYZE to understand execution plans
+2. Identify missing indexes
+3. Suggest query rewrites for better performance
+4. Consider database-specific optimizations
+
+When designing schemas:
+1. Normalize to 3NF unless performance requires denormalization
+2. Choose appropriate data types
+3. Add indexes for foreign keys and frequently queried columns
+4. Include constraints for data integrity
+
+Always explain your reasoning and provide benchmarks when possible.
+"""
+
+tags = ["database", "sql", "performance"]
+
+[persona]
+division = "engineering"
+communication_style = "Technical and data-driven. Uses metrics and execution plans to support recommendations."
+critical_rules = [
+  "Always check execution plans before suggesting optimizations",
+  "Never recommend changes without understanding query patterns",
+  "Consider database version and configuration"
+]
+```
+
+### Step 3: Register Agent
+
+```bash
+# Register with CLI
+agentos agent create agents/my-agent/agent.toml
+
+# Or use API
+curl -X POST http://localhost:3111/agents \
+  -H "Content-Type: application/json" \
+  -d @agents/my-agent/agent.toml
+```
+
+### Step 4: Test Agent
+
+```bash
+# Chat with agent
+agentos chat sql-expert
+
+# Send single message
+agentos message sql-expert "Optimize this query: SELECT * FROM users WHERE email LIKE '%@example.com'"
+```
+
+## Agent with Custom Tools
+
+Create an agent that uses custom tools:
+
+```toml agents/github-helper/agent.toml
+[agent]
+name = "github-helper"
+description = "GitHub operations specialist"
+module = "builtin:chat"
+
+[agent.model]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+max_tokens = 4096
+
+[agent.capabilities]
+tools = [
+  "tool::file_*",
+  "github::*",  # Custom GitHub tools
+  "git::*",     # Custom Git tools
+  "memory::*"
+]
+
+system_prompt = """
+You are a GitHub automation assistant.
+
+You can:
+- Create and manage pull requests
+- Review code and add comments
+- Manage issues and labels
+- Run GitHub Actions workflows
+- Analyze repository metrics
+
+Always:
+- Verify permissions before taking destructive actions
+- Follow repository contribution guidelines
+- Write clear PR descriptions with context
+- Reference issues in commits
+"""
+
+tags = ["github", "automation", "devops"]
+```
+
+Ensure your custom tools are registered:
+
+```typescript src/github-tools.ts
+registerFunction(
+  { id: "github::create_pr", description: "Create a pull request" },
+  async ({ repo, title, body, base, head }: any) => {
+    // Implementation
+  }
+);
+
+registerFunction(
+  { id: "git::commit", description: "Create a git commit" },
+  async ({ message, files }: any) => {
+    // Implementation
+  }
+);
+```
+
+## Agent with Specialized Model
+
+Use different models for different tasks:
+
+```toml agents/code-reviewer/agent.toml
+[agent]
+name = "code-reviewer"
+description = "Thorough code reviewer using Claude Opus"
+module = "builtin:chat"
+
+[agent.model]
+provider = "anthropic"
+model = "claude-opus-4"  # More powerful model
+max_tokens = 8192
+
+[agent.capabilities]
+tools = ["tool::file_*", "tool::code_*", "git::*"]
+
+[agent.resources]
+max_tokens_per_hour = 200000  # Higher limit for detailed reviews
+
+system_prompt = """
+You are a meticulous code reviewer.
+
+Review criteria:
+1. **Correctness**: Does the code work as intended?
+2. **Security**: Are there any vulnerabilities?
+3. **Performance**: Are there inefficiencies?
+4. **Maintainability**: Is the code readable and well-structured?
+5. **Testing**: Are there adequate tests?
+
+For each file:
+- Provide line-by-line feedback
+- Suggest specific improvements
+- Rate severity: CRITICAL, HIGH, MEDIUM, LOW
+- Include code snippets showing the fix
+
+Be constructive and educational.
+"""
+
+tags = ["code-review", "quality", "senior"]
+```
+
+## Agent Hierarchies
+
+Create agents that delegate to other agents:
+
+```toml agents/orchestrator/agent.toml
+[agent]
+name = "orchestrator"
+description = "Coordinates multiple specialized agents"
+module = "builtin:chat"
+
+[agent.model]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+max_tokens = 4096
+
+[agent.capabilities]
+tools = [
+  "agent::list",
+  "agent::delegate",
+  "agent::spawn",
+  "workflow::*"
+]
+
+system_prompt = """
+You are an orchestrator agent that coordinates multiple specialized agents.
+
+Available agents:
+- coder: Write and refactor code
+- test-engineer: Write tests
+- doc-writer: Create documentation
+- security-auditor: Security reviews
+- devops-lead: Deployment and infrastructure
+
+When given a task:
+1. Break it into subtasks
+2. Identify which agent should handle each subtask
+3. Delegate using agent::delegate
+4. Coordinate results and provide summary
+
+You don't write code yourself - delegate to specialized agents.
+"""
+
+tags = ["orchestration", "coordination", "meta"]
+```
+
+## Testing Agents
+
+### Interactive Testing
+
+```bash
+# Start interactive chat
+agentos chat my-agent
+
+# Test specific scenarios
+agentos message my-agent "Test scenario 1"
+agentos message my-agent "Test scenario 2" --session test-1
+```
+
+### Programmatic Testing
+
+```typescript tests/agents/my-agent.test.ts
+import { describe, it, expect } from "vitest";
+import { init } from "iii-sdk";
+
+const { trigger } = init("ws://localhost:49134", { workerName: "test" });
+
+describe("sql-expert agent", () => {
+  it("should identify missing indexes", async () => {
+    const response = await trigger("agent::chat", {
+      agentId: "sql-expert",
+      message: "This query is slow: SELECT * FROM users WHERE email = 'test@example.com'",
+      sessionId: "test-session-1"
+    }, 120_000);
+    
+    expect(response.content).toContain("index");
+    expect(response.content).toContain("email");
+  });
+  
+  it("should use explain analyze", async () => {
+    const response = await trigger("agent::chat", {
+      agentId: "sql-expert",
+      message: "Analyze query performance for SELECT * FROM orders WHERE status = 'pending'",
+      sessionId: "test-session-2"
+    }, 120_000);
+    
+    expect(response.iterations).toBeGreaterThan(0);
+    // Should have called db::explain tool
+  });
+});
+```
+
+## Agent Lifecycle
+
+```bash
+# Create agent
+agentos agent create agents/my-agent/agent.toml
+
+# List all agents
+agentos agent list
+
+# Get agent details
+agentos agent get my-agent
+
+# Update agent configuration
+vim agents/my-agent/agent.toml
+agentos agent update my-agent agents/my-agent/agent.toml
+
+# Delete agent
+agentos agent delete my-agent
+
+# Spawn agent from template
+agentos agent spawn coder
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Specific System Prompts">
+    Be explicit about:
+    - Role and expertise level
+    - Output format (markdown, JSON, etc.)
+    - When to use which tools
+    - Error handling and edge cases
+    
+    ```toml
+    system_prompt = """
+    You are a [specific role] with [expertise level].
+    
+    Output format: [detailed specification]
+    
+    Use tools:
+    - tool::file_read when [condition]
+    - tool::web_search when [condition]
+    
+    Error handling:
+    - If [error], then [action]
+    """
+    ```
+  </Step>
+
+  <Step title="Principle of Least Privilege">
+    Only grant necessary tool access:
+    
+    ```toml
+    # Bad: Grants too much access
+    tools = ["*"]
+    
+    # Good: Explicit permissions
+    tools = ["tool::file_read", "tool::web_search", "memory::store"]
+    ```
+  </Step>
+
+  <Step title="Resource Limits">
+    Set appropriate budgets:
+    
+    ```toml
+    [agent.resources]
+    max_tokens_per_hour = 100000  # Prevents runaway costs
+    max_concurrent_requests = 3   # Prevents rate limit issues
+    ```
+  </Step>
+
+  <Step title="Versioning">
+    Track agent evolution:
+    
+    ```toml
+    tags = ["v2", "production", "2025-03"]
+    ```
+    
+    Keep old versions in `agents/my-agent-v1/`
+  </Step>
+
+  <Step title="Documentation">
+    Add README.md with agent documentation, usage examples, and tool requirements. Include the agent's purpose, common use cases, and dependencies.
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Test your custom agents
+  </Card>
+  <Card title="Agent Templates" icon="file" href="/essentials/agents">
+    Explore the 45 built-in templates
+  </Card>
+  <Card title="Security & Approval" icon="shield" href="/essentials/security">
+    Configure approval gates for sensitive operations
+  </Card>
+  <Card title="Swarms" icon="users" href="/essentials/swarms">
+    Coordinate multiple agents
+  </Card>
+</CardGroup>

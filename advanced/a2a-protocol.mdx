@@ -1,0 +1,457 @@
+---
+title: Agent-to-Agent Protocol (A2A)
+description: Connect and coordinate agents across different AgentOS instances using JSON-RPC 2.0
+---
+
+# Agent-to-Agent Protocol (A2A)
+
+The Agent-to-Agent (A2A) protocol allows AgentOS instances to discover, connect, and delegate tasks to each other. Built on JSON-RPC 2.0 with AgentCard discovery, A2A enables decentralized multi-agent systems that span organizational boundaries.
+
+## Overview
+
+Implemented in `src/a2a.ts:1` and `src/a2a-cards.ts:1`, A2A provides:
+
+- **JSON-RPC 2.0** transport for agent communication
+- **AgentCard discovery** via `.well-known/agent.json`
+- **Task lifecycle** with states: submitted → working → completed/failed
+- **Multi-turn conversations** with message history
+- **Agent skill advertising** with 15,000+ SkillKit skills
+
+## Core Concepts
+
+<CardGroup cols={3}>
+  <Card title="AgentCard" icon="id-card">
+    Machine-readable description of an agent's capabilities, skills, and endpoint
+  </Card>
+  <Card title="Tasks" icon="list-check">
+    Work items sent between agents with status tracking and history
+  </Card>
+  <Card title="JSON-RPC 2.0" icon="code">
+    Standard protocol for remote procedure calls over HTTP
+  </Card>
+</CardGroup>
+
+## AgentCard Structure
+
+From `src/a2a-cards.ts:9-22`:
+
+```typescript
+interface AgentCard {
+  name: string;                    // Agent name
+  description: string;             // What the agent does
+  url: string;                     // RPC endpoint
+  capabilities: {
+    tools: string[];               // Available tool IDs
+    streaming: boolean;
+    pushNotifications: boolean;
+  };
+  skills: Array<{                 // SkillKit skills
+    id: string;
+    name: string;
+    description: string;
+  }>;
+  authentication: { 
+    schemes: string[];            // ["bearer"]
+  };
+  defaultInputModes: string[];    // ["text"]
+  defaultOutputModes: string[];   // ["text"]
+}
+```
+
+## Discovering Agents
+
+<Steps>
+  <Step title="Fetch the AgentCard">
+    Every A2A-compatible agent exposes an AgentCard at `/.well-known/agent.json`:
+
+    ```typescript
+    import { trigger } from "iii-sdk";
+
+    const { card } = await trigger("a2a::discover", {
+      url: "https://other-agent.example.com"
+    });
+
+    console.log(card);
+    // {
+    //   name: "research-agent",
+    //   description: "Specialized research and analysis agent",
+    //   url: "https://other-agent.example.com/a2a/rpc",
+    //   capabilities: { tools: [...], streaming: true },
+    //   skills: [...],
+    //   authentication: { schemes: ["bearer"] }
+    // }
+    ```
+
+    From `src/a2a.ts:461-494`, the discovery function:
+    - Fetches `{url}/.well-known/agent.json`
+    - Caches the card in state
+    - Returns the discovered capabilities
+  </Step>
+
+  <Step title="Browse available skills">
+    ```typescript
+    console.log(`Agent has ${card.skills.length} skills:`);
+    for (const skill of card.skills.slice(0, 5)) {
+      console.log(`- ${skill.name}: ${skill.description}`);
+    }
+    ```
+  </Step>
+
+  <Step title="Check authentication requirements">
+    ```typescript
+    if (card.authentication.schemes.includes("bearer")) {
+      console.log("Agent requires bearer token authentication");
+    }
+    ```
+  </Step>
+</Steps>
+
+## Sending Tasks
+
+### Send a Task to Another Agent
+
+```typescript
+const task = await trigger("a2a::send_task", {
+  agentUrl: "https://other-agent.example.com/a2a/rpc",
+  message: "Analyze the Q4 sales data and identify trends",
+  sessionId: "session-abc-123",  // Optional: multi-turn conversation
+  metadata: {
+    priority: "high",
+    department: "sales"
+  }
+});
+
+console.log(task);
+// {
+//   id: "task-xyz-789",
+//   sessionId: "session-abc-123",
+//   status: { state: "working", timestamp: "2026-03-09T10:30:00Z" },
+//   history: [
+//     { role: "user", parts: [{ type: "text", text: "Analyze the Q4..." }] }
+//   ],
+//   artifacts: [],
+//   metadata: { priority: "high", department: "sales" },
+//   createdAt: 1709976600000
+// }
+```
+
+From `src/a2a.ts:196-276`, the task is:
+1. Created with a unique ID
+2. Sent via JSON-RPC POST to the agent's URL
+3. Stored locally for tracking
+4. Added to the task order queue
+
+### Check Task Status
+
+```typescript
+const status = await trigger("a2a::get_task", {
+  taskId: "task-xyz-789",
+  agentUrl: "https://other-agent.example.com/a2a/rpc"
+});
+
+console.log(status.status);
+// { state: "completed", message: {...}, timestamp: "2026-03-09T10:32:15Z" }
+```
+
+### Cancel a Task
+
+```typescript
+await trigger("a2a::cancel_task", {
+  taskId: "task-xyz-789",
+  agentUrl: "https://other-agent.example.com/a2a/rpc"
+});
+```
+
+## Task States
+
+From `src/a2a.ts:10-16`:
+
+<Steps>
+  <Step title="submitted">
+    Task received but not yet started
+  </Step>
+  <Step title="working">
+    Agent is actively processing the task
+  </Step>
+  <Step title="input-required">
+    Agent needs clarification or additional input
+  </Step>
+  <Step title="completed">
+    Task finished successfully with results
+  </Step>
+  <Step title="cancelled">
+    Task was cancelled before completion
+  </Step>
+  <Step title="failed">
+    Task failed with an error
+  </Step>
+</Steps>
+
+## Message Structure
+
+From `src/a2a.ts:18-30`:
+
+```typescript
+interface A2aMessage {
+  role: "user" | "agent";
+  parts: Part[];
+}
+
+type Part = 
+  | { type: "text"; text: string }
+  | { type: "file"; file: { name: string; mimeType: string; bytes: string } }
+  | { type: "data"; data: Record<string, unknown> };
+```
+
+Multimodal messages support text, files, and structured data.
+
+## Receiving Tasks
+
+AgentOS automatically handles incoming A2A tasks via the `a2a::handle_task` function (`src/a2a.ts:321-459`):
+
+```typescript
+// When another agent sends a task to your instance:
+// POST https://your-agent.example.com/a2a/rpc
+// {
+//   "jsonrpc": "2.0",
+//   "id": "req-123",
+//   "method": "tasks/send",
+//   "params": {
+//     "id": "task-abc-456",
+//     "sessionId": "session-xyz",
+//     "message": { role: "user", parts: [...] },
+//     "metadata": {...}
+//   }
+// }
+
+// AgentOS automatically:
+// 1. Creates the task
+// 2. Routes to the default agent
+// 3. Executes the agent loop
+// 4. Returns the response
+```
+
+The handler routes incoming tasks to `agent::chat` and updates the task status.
+
+## JSON-RPC Methods
+
+From the implementation:
+
+### `tasks/send`
+
+Create a new task:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req-123",
+  "method": "tasks/send",
+  "params": {
+    "id": "task-xyz-789",
+    "sessionId": "session-abc-123",
+    "message": {
+      "role": "user",
+      "parts": [
+        { "type": "text", "text": "Analyze this data..." }
+      ]
+    },
+    "metadata": {}
+  }
+}
+```
+
+### `tasks/get`
+
+Retrieve task status:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req-124",
+  "method": "tasks/get",
+  "params": { "id": "task-xyz-789" }
+}
+```
+
+### `tasks/cancel`
+
+Cancel a running task:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req-125",
+  "method": "tasks/cancel",
+  "params": { "id": "task-xyz-789" }
+}
+```
+
+## Real-World Example: Multi-Agent Research
+
+```typescript
+// Discover available research agents
+const agents = [
+  "https://research-1.example.com",
+  "https://research-2.example.com",
+  "https://research-3.example.com"
+];
+
+const cards = await Promise.all(
+  agents.map(url => trigger("a2a::discover", { url }))
+);
+
+// Send parallel research tasks
+const tasks = await Promise.all(
+  agents.map((url, i) => 
+    trigger("a2a::send_task", {
+      agentUrl: `${url}/a2a/rpc`,
+      message: `Research aspect ${i + 1} of quantum computing`,
+      metadata: { aspect: i + 1 }
+    })
+  )
+);
+
+console.log(`Dispatched ${tasks.length} research tasks`);
+
+// Poll for completion
+const results = [];
+for (const task of tasks) {
+  let status = await trigger("a2a::get_task", {
+    taskId: task.id,
+    agentUrl: task.metadata.agentUrl
+  });
+
+  while (status.status.state === "working" || status.status.state === "submitted") {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    status = await trigger("a2a::get_task", {
+      taskId: task.id,
+      agentUrl: task.metadata.agentUrl
+    });
+  }
+
+  if (status.status.state === "completed") {
+    results.push(status.status.message);
+  }
+}
+
+console.log(`Collected ${results.length} research findings`);
+```
+
+## Exposing Your AgentCard
+
+### Generate a Card
+
+```typescript
+const card = await trigger("a2a::agent_card", {
+  baseUrl: "https://your-agent.example.com",
+  name: "code-analyzer",
+  description: "Analyzes code for bugs, performance issues, and security vulnerabilities",
+  skills: [
+    {
+      id: "code-review",
+      name: "Code Review",
+      description: "Review code for quality and security",
+      tags: ["code", "security"],
+      examples: ["Review this PR", "Check for SQL injection"]
+    }
+  ]
+});
+```
+
+From `src/a2a.ts:142-194`, this generates a card and stores it at `state::set("a2a", "agent_card")`.
+
+### Serve the Card
+
+The card is automatically served at `/.well-known/agent.json` via HTTP trigger (`src/a2a.ts:497-501`).
+
+### List All Agent Cards
+
+```typescript
+const cards = await trigger("a2a::list_cards", {});
+
+console.log(`${cards.length} agents available`);
+for (const card of cards) {
+  console.log(`- ${card.name}: ${card.capabilities.tools.length} tools`);
+}
+```
+
+## Task Limits
+
+From `src/a2a.ts:72`:
+
+- **MAX_TASKS**: 1000 tasks stored per instance
+- Oldest tasks are automatically evicted when limit is reached
+- Task order is maintained in `state::set("a2a_tasks", "_order")`
+
+## HTTP API Endpoints
+
+```bash
+# Discover agent
+curl -X POST http://localhost:3111/api/a2a/discover \
+  -d '{ "url": "https://other-agent.example.com" }'
+
+# Send task
+curl -X POST http://localhost:3111/api/a2a/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentUrl": "https://other-agent.example.com/a2a/rpc",
+    "message": "Analyze this data...",
+    "metadata": {}
+  }'
+
+# Get task status
+curl "http://localhost:3111/api/a2a/task?taskId=task-xyz-789"
+
+# Cancel task
+curl -X POST http://localhost:3111/api/a2a/cancel \
+  -d '{ "taskId": "task-xyz-789" }'
+
+# Get AgentCard
+curl http://localhost:3111/.well-known/agent.json
+
+# List all cards
+curl http://localhost:3111/api/a2a/cards
+```
+
+## Security Considerations
+
+<AccordionGroup>
+  <Accordion title="SSRF Protection">
+    From `src/a2a.ts:114`, all URLs are validated with `assertNoSsrf()` to prevent Server-Side Request Forgery attacks.
+  </Accordion>
+
+  <Accordion title="Authentication Required">
+    Task handling requires authentication via `requireAuth()` (see `src/a2a.ts:328`).
+  </Accordion>
+
+  <Accordion title="Rate Limiting">
+    Consider implementing rate limits on the A2A RPC endpoint to prevent abuse.
+  </Accordion>
+
+  <Accordion title="Agent Verification">
+    Verify AgentCards are served over HTTPS and validate signatures if available.
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use SessionIDs" icon="link">
+    Maintain conversation context across multiple task invocations
+  </Card>
+  <Card title="Set Timeouts" icon="clock">
+    Poll with exponential backoff and set max wait times
+  </Card>
+  <Card title="Handle Failures" icon="triangle-exclamation">
+    Check for "failed" state and implement retry logic
+  </Card>
+  <Card title="Advertise Skills" icon="megaphone">
+    Include relevant skills in your AgentCard for discoverability
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [Swarms](/advanced/swarms) - Coordinate local agents before delegating to A2A
+- [MCP Integration](/advanced/mcp-integration) - Combine A2A with Model Context Protocol
+- [SkillKit](/advanced/skillkit) - Advertise SkillKit skills in your AgentCard

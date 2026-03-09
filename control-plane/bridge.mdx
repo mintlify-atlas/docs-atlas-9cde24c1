@@ -1,0 +1,577 @@
+---
+title: 'Bridge'
+description: 'External runtime adapters for Process, HTTP, and specialized coding environments'
+---
+
+The **Bridge** crate connects AgentOS to external agent runtimes, enabling agents built in other environments (Python, HTTP APIs, ClaudeCode, Codex, Cursor, OpenCode) to participate in the control plane.
+
+## Overview
+
+- **Purpose:** Adapter layer for 6 external runtime types
+- **LOC:** ~300
+- **Functions:** 5 (register, invoke, cancel, list, run)
+- **Endpoints:** 5 REST
+- **Source:** `crates/bridge/src/main.rs`
+
+## Core Concepts
+
+### Runtime Types
+
+```rust
+enum RuntimeKind {
+    Process,     // Execute local command
+    Http,        // HTTP POST to external API
+    ClaudeCode,  // Claude Code Editor integration
+    Codex,       // OpenAI Codex integration
+    Cursor,      // Cursor AI integration
+    OpenCode,    // OpenCode AI integration
+    Custom,      // User-defined
+}
+```
+
+### Runtime Configuration
+
+```rust
+struct RuntimeConfig {
+    id: String,                    // "rt-{uuid}"
+    kind: RuntimeKind,
+    name: String,
+    command: Option<String>,       // For Process-based
+    args: Option<Vec<String>>,
+    url: Option<String>,           // For HTTP
+    headers: Option<Value>,
+    env_vars: Option<Value>,
+    work_dir: Option<String>,
+    timeout_secs: Option<u64>,
+}
+```
+
+### Runtime Run
+
+```rust
+struct RuntimeRun {
+    id: String,                    // "brun-{uuid}"
+    runtime_id: String,
+    agent_id: String,
+    status: RunStatus,             // Running, Completed, Failed, Cancelled
+    output: Option<String>,
+    error: Option<String>,
+    exit_code: Option<i32>,
+    started_at: String,
+    finished_at: Option<String>,
+}
+```
+
+## Functions
+
+### bridge::register
+
+Register an external runtime.
+
+<ParamField path="kind" type="string" required>
+  Runtime type: "Process", "Http", "ClaudeCode", "Codex", "Cursor", "OpenCode", "Custom"
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Runtime display name
+</ParamField>
+
+<ParamField path="command" type="string">
+  Command to execute (required for Process-based)
+</ParamField>
+
+<ParamField path="args" type="array">
+  Command arguments
+</ParamField>
+
+<ParamField path="url" type="string">
+  API endpoint (required for HTTP)
+</ParamField>
+
+<ParamField path="headers" type="object">
+  HTTP headers
+</ParamField>
+
+<ParamField path="envVars" type="object">
+  Environment variables
+</ParamField>
+
+<ParamField path="workDir" type="string">
+  Working directory
+</ParamField>
+
+<ParamField path="timeoutSecs" type="number">
+  Execution timeout
+</ParamField>
+
+**Examples:**
+
+```rust
+// Register Python agent
+iii.trigger("bridge::register", json!({
+    "kind": "Process",
+    "name": "Python Research Agent",
+    "command": "python",
+    "args": ["agents/researcher.py"],
+    "workDir": "/opt/agents",
+    "timeoutSecs": 300,
+    "envVars": {
+        "OPENAI_API_KEY": "sk-..."
+    }
+})).await?;
+
+// Register HTTP agent
+iii.trigger("bridge::register", json!({
+    "kind": "Http",
+    "name": "External Agent API",
+    "url": "https://external-agent.example.com/invoke",
+    "headers": {
+        "Authorization": "Bearer token123",
+        "Content-Type": "application/json"
+    },
+    "timeoutSecs": 60
+})).await?;
+
+// Register ClaudeCode agent
+iii.trigger("bridge::register", json!({
+    "kind": "ClaudeCode",
+    "name": "Claude Code Agent",
+    "command": "claude-code",
+    "args": ["--mode", "agent"],
+    "timeoutSecs": 600
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+POST /api/bridge/runtimes
+Content-Type: application/json
+
+{
+  "kind": "Process",
+  "name": "Python Agent",
+  "command": "python",
+  "args": ["agent.py"],
+  "timeoutSecs": 300
+}
+```
+
+**Validation (bridge/src/main.rs:38-50):**
+
+```rust
+match config.kind {
+    RuntimeKind::Process | RuntimeKind::ClaudeCode | RuntimeKind::Codex 
+    | RuntimeKind::Cursor | RuntimeKind::OpenCode => {
+        if config.command.is_none() {
+            return Err(IIIError::Handler("process-based runtimes require 'command'".into()));
+        }
+    }
+    RuntimeKind::Http => {
+        if config.url.is_none() {
+            return Err(IIIError::Handler("http runtime requires 'url'".into()));
+        }
+    }
+    RuntimeKind::Custom => {}
+}
+```
+
+### bridge::invoke
+
+Invoke an agent through its runtime.
+
+<ParamField path="runtimeId" type="string" required>
+  Runtime identifier
+</ParamField>
+
+<ParamField path="agentId" type="string" required>
+  Agent identifier
+</ParamField>
+
+<ParamField path="context" type="object" required>
+  Context data to pass to agent
+</ParamField>
+
+<ParamField path="timeoutSecs" type="number">
+  Override timeout for this invocation
+</ParamField>
+
+**Example:**
+
+```rust
+let run = iii.trigger("bridge::invoke", json!({
+    "runtimeId": "rt-abc123",
+    "agentId": "agent-python-1",
+    "context": {
+        "task": "analyze",
+        "input": "https://example.com/data.csv",
+        "parameters": {
+            "columns": ["revenue", "profit"],
+            "period": "2024-Q1"
+        }
+    },
+    "timeoutSecs": 600
+})).await?;
+
+// Returns immediately with run ID:
+// {
+//   "runId": "brun-xyz789",
+//   "status": "running"
+// }
+
+// Check status later with bridge::run
+```
+
+**REST Endpoint:**
+```bash
+POST /api/bridge/invoke
+Content-Type: application/json
+
+{
+  "runtimeId": "rt-abc123",
+  "agentId": "agent-python-1",
+  "context": { "task": "analyze", "input": "..." }
+}
+```
+
+**Async Execution (bridge/src/main.rs:106-141):**
+
+```rust
+let handle = tokio::spawn(async move {
+    let result = execute_runtime(&iii_bg, &config, &req.context, timeout).await;
+
+    let (status, output, error, exit_code) = match result {
+        Ok(out) => (RunStatus::Completed, Some(out), None, Some(0)),
+        Err(e) => (RunStatus::Failed, None, Some(e.to_string()), Some(1)),
+    };
+
+    let finished_run = RuntimeRun {
+        id: run_id_bg.clone(),
+        runtime_id: config.id.clone(),
+        agent_id: req.agent_id.clone(),
+        status,
+        output,
+        error,
+        exit_code,
+        started_at: run.started_at.clone(),
+        finished_at: Some(chrono::Utc::now().to_rfc3339()),
+    };
+
+    // Save final state
+    let val = serde_json::to_value(&finished_run).unwrap();
+    let _ = iii_bg.trigger("state::set", json!({
+        "scope": runs_scope(),
+        "key": &run_id_bg,
+        "value": val,
+    })).await;
+
+    // Publish completion event
+    let _ = iii_bg.trigger_void("publish", json!({
+        "topic": "bridge.run.completed",
+        "data": { "runId": run_id_bg, "status": format!("{:?}", finished_run.status).to_lowercase() },
+    }));
+});
+
+active_runs.insert(run_id.clone(), handle);
+```
+
+### bridge::cancel
+
+Cancel a running invocation.
+
+<ParamField path="runId" type="string" required>
+  Run identifier
+</ParamField>
+
+**Example:**
+
+```rust
+iii.trigger("bridge::cancel", json!({
+    "runId": "brun-xyz789"
+})).await?;
+
+// Returns:
+// {
+//   "cancelled": true,
+//   "runId": "brun-xyz789"
+// }
+```
+
+**REST Endpoint:**
+```bash
+POST /api/bridge/cancel
+Content-Type: application/json
+
+{
+  "runId": "brun-xyz789"
+}
+```
+
+### bridge::list
+
+List registered runtimes.
+
+```rust
+let runtimes = iii.trigger("bridge::list", json!({})).await?;
+
+// Returns array of RuntimeConfig objects
+```
+
+**REST Endpoint:**
+```bash
+GET /api/bridge/runtimes
+```
+
+### bridge::run
+
+Get status of a bridge run.
+
+<ParamField path="runId" type="string" required>
+  Run identifier
+</ParamField>
+
+**Example:**
+
+```rust
+let run = iii.trigger("bridge::run", json!({
+    "runId": "brun-xyz789"
+})).await?;
+
+// Returns:
+// {
+//   "id": "brun-xyz789",
+//   "status": "Completed",
+//   "output": "Analysis complete. Revenue up 15% vs Q4...",
+//   "error": null,
+//   "exitCode": 0,
+//   "startedAt": "2024-03-09T10:30:00Z",
+//   "finishedAt": "2024-03-09T10:32:30Z"
+// }
+```
+
+**REST Endpoint:**
+```bash
+GET /api/bridge/runs/brun-xyz789
+```
+
+## Runtime Execution Details
+
+### Process Execution
+
+**Path Traversal Prevention (bridge/src/main.rs:176-186):**
+
+```rust
+let work_dir = if let Some(ref dir) = config.work_dir {
+    let canonical = std::path::Path::new(dir)
+        .canonicalize()
+        .map_err(|e| IIIError::Handler(format!("invalid work_dir: {e}")))?;
+    
+    // Only allow cwd or /tmp
+    if !canonical.starts_with(std::env::current_dir().unwrap_or_default()) 
+        && !canonical.starts_with("/tmp") {
+        return Err(IIIError::Handler("work_dir must be under cwd or /tmp".into()));
+    }
+    canonical
+} else {
+    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+};
+```
+
+**Timeout Enforcement (bridge/src/main.rs:191-219):**
+
+```rust
+let result = tokio::time::timeout(timeout, async {
+    let mut cmd_builder = tokio::process::Command::new(cmd);
+    cmd_builder.args(&command_args).current_dir(&work_dir);
+
+    if let Some(ref env_vars) = config.env_vars {
+        if let Some(obj) = env_vars.as_object() {
+            for (k, v) in obj {
+                if let Some(val) = v.as_str() {
+                    cmd_builder.env(k, val);
+                }
+            }
+        }
+    }
+
+    let output = cmd_builder
+        .output()
+        .await
+        .map_err(|e| IIIError::Handler(format!("spawn failed: {e}")))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(IIIError::Handler(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ))
+    }
+})
+.await
+.map_err(|_| IIIError::Handler("runtime execution timed out".into()))?;
+```
+
+### HTTP Execution
+
+```rust
+RuntimeKind::Http => {
+    let url = config.url.as_deref().ok_or_else(|| IIIError::Handler("missing url".into()))?;
+
+    let result = iii
+        .trigger("http::post", json!({
+            "url": url,
+            "body": context,
+            "headers": config.headers,
+            "timeoutMs": timeout_secs * 1000,
+        }))
+        .await
+        .map_err(|e| IIIError::Handler(format!("http invoke failed: {e}")))?;
+
+    Ok(result.to_string())
+}
+```
+
+## JoinHandle Cleanup
+
+**Shutdown Handler (bridge/src/main.rs:347-354):**
+
+```rust
+tokio::signal::ctrl_c().await?;
+
+// Abort all running tasks
+for entry in active_runs.iter() {
+    entry.value().abort();
+}
+active_runs.clear();
+
+iii.shutdown_async().await;
+```
+
+## Storage
+
+- `bridge:runtimes` - Runtime configurations
+- `bridge:runs` - Run history
+
+## Events
+
+Bridge publishes to `bridge.run.completed` topic:
+
+```json
+{
+  "runId": "brun-xyz789",
+  "status": "completed" | "failed" | "cancelled"
+}
+```
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Python Agents" icon="python">
+    Integrate existing Python ML/data agents into AgentOS control plane.
+  </Card>
+  <Card title="HTTP Microservices" icon="cloud">
+    Connect agents running as HTTP microservices in Kubernetes.
+  </Card>
+  <Card title="Coding Environments" icon="code">
+    Use ClaudeCode, Cursor, or OpenCode agents for specialized coding tasks.
+  </Card>
+  <Card title="Polyglot Teams" icon="language">
+    Mix Rust, TypeScript, Python, and HTTP agents in one coherent system.
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Use process isolation">
+    Process-based runtimes provide better isolation than in-process execution.
+  </Step>
+  
+  <Step title="Set reasonable timeouts">
+    Default to 300s (5 min) for most tasks. Increase for long-running operations.
+  </Step>
+  
+  <Step title="Validate work_dir">
+    Bridge enforces cwd or /tmp. Don't try to escape via ../.. traversal.
+  </Step>
+  
+  <Step title="Pass structured context">
+    Use JSON objects for context, not plain strings, for better agent parsing.
+  </Step>
+  
+  <Step title="Monitor run status">
+    Poll bridge::run periodically to check completion and retrieve output.
+  </Step>
+  
+  <Step title="Handle errors gracefully">
+    Check exit_code and error fields to handle runtime failures.
+  </Step>
+</Steps>
+
+## Integration Example
+
+**Python Agent (agents/researcher.py):**
+
+```python
+import sys
+import json
+
+# Receive context as JSON string argument
+context = json.loads(sys.argv[1])
+
+task = context.get('task')
+input_url = context.get('input')
+
+# Perform research
+result = perform_research(task, input_url)
+
+# Output result as JSON
+print(json.dumps({
+    'status': 'success',
+    'findings': result,
+    'confidence': 0.95
+}))
+```
+
+**Register and invoke:**
+
+```rust
+// Register
+let runtime = iii.trigger("bridge::register", json!({
+    "kind": "Process",
+    "name": "Researcher",
+    "command": "python",
+    "args": ["agents/researcher.py"],
+})).await?;
+
+let runtime_id = runtime["id"].as_str().unwrap();
+
+// Invoke
+let run = iii.trigger("bridge::invoke", json!({
+    "runtimeId": runtime_id,
+    "agentId": "agent-researcher-1",
+    "context": {
+        "task": "market_analysis",
+        "input": "https://example.com/data.json"
+    }
+})).await?;
+
+let run_id = run["runId"].as_str().unwrap();
+
+// Wait and check
+tokio::time::sleep(Duration::from_secs(5)).await;
+
+let result = iii.trigger("bridge::run", json!({
+    "runId": run_id
+})).await?;
+
+if result["status"] == "Completed" {
+    let output: Value = serde_json::from_str(result["output"].as_str().unwrap())?;
+    println!("Findings: {:?}", output["findings"]);
+}
+```
+
+## Related
+
+- [Pulse](/control-plane/pulse) - Schedule bridge invocations via pulse
+- [Mission](/control-plane/mission) - Link bridge runs to missions
+- [Ledger](/control-plane/ledger) - Track costs of bridge invocations

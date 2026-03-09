@@ -1,0 +1,439 @@
+---
+title: Intelligent Routing
+description: Learn how AgentOS automatically selects optimal models based on complexity scoring
+---
+
+AgentOS includes an **intelligent routing system** that automatically selects the optimal model for each request based on complexity analysis, balancing capability, cost, and latency.
+
+## Overview
+
+The routing system analyzes incoming requests and assigns a **complexity score** (0-100+) based on multiple factors. This score determines which tier of model to use:
+
+- **Low complexity (0-10)**: Route to **fast** tier (Haiku, GPT-4o mini)
+- **Medium complexity (11-40)**: Route to **smart** tier (Sonnet, GPT-4o)
+- **High complexity (41+)**: Route to **frontier** tier (Opus, o3)
+
+## Architecture
+
+Routing is implemented in two layers:
+
+### TypeScript Router (`src/llm-router.ts`)
+
+```typescript:src/llm-router.ts
+registerFunction(
+  { id: "llm::route", description: "Select optimal model by query complexity" },
+  async ({ message, toolCount, config }) => {
+    if (config?.model) {
+      return {
+        provider: config.provider || "anthropic",
+        model: config.model,
+        maxTokens: config.maxTokens || 4096,
+      };
+    }
+
+    const score = scoreComplexity(message, toolCount || 0);
+
+    if (score < 0.3) {
+      return { provider: "anthropic", model: "claude-haiku-4-5", maxTokens: 2048 };
+    }
+    if (score < 0.7) {
+      return { provider: "anthropic", model: "claude-sonnet-4-6", maxTokens: 4096 };
+    }
+    return { provider: "anthropic", model: "claude-opus-4-6", maxTokens: 8192 };
+  }
+);
+```
+
+### Rust Router (`crates/llm-router/src/main.rs`)
+
+```rust:crates/llm-router/src/main.rs
+fn score_complexity(messages: &[Value], tools: &[Value]) -> u32 {
+    let mut score: u32 = 0;
+    if let Some(last) = messages.last() {
+        let content = last["content"].as_str().unwrap_or("");
+        score += (content.len() as u32) / 100;
+        if content.contains("`\`\`") || content.contains("function") || content.contains("class") {
+            score += 20;
+        }
+        if content.contains("analyze") || content.contains("compare") || content.contains("design") {
+            score += 15;
+        }
+    }
+    score += (tools.len() as u32) * 5;
+    if messages.len() > 10 { score += 10; }
+    score
+}
+
+fn select_model(complexity: u32, preferred: Option<&str>) -> (&'static str, &'static str) {
+    if let Some(p) = preferred {
+        // Handle explicit preferences
+        match p {
+            "opus" | "claude-opus" => return ("anthropic", "claude-opus-4-20250514"),
+            "sonnet" | "claude-sonnet" => return ("anthropic", "claude-sonnet-4-20250514"),
+            "haiku" | "claude-haiku" => return ("anthropic", "claude-haiku-4-5-20251001"),
+            "gpt-4o" => return ("openai", "gpt-4o"),
+            "gemini" => return ("google", "gemini-2.0-flash"),
+            _ => {}
+        }
+    }
+    match complexity {
+        0..=10 => ("anthropic", "claude-haiku-4-5-20251001"),
+        11..=40 => ("anthropic", "claude-sonnet-4-20250514"),
+        _ => ("anthropic", "claude-opus-4-20250514"),
+    }
+}
+```
+
+## Complexity Scoring
+
+The system analyzes multiple dimensions to calculate complexity:
+
+### Message Length
+
+```typescript
+// Base score from character count
+let score = 0;
+const len = message.length;
+
+if (len > 2000) score += 0.3;        // Very long messages
+else if (len > 500) score += 0.15;   // Medium messages
+else if (len < 50) score -= 0.1;     // Very short messages
+```
+
+**Rust implementation:**
+```rust
+score += (content.len() as u32) / 100;  // +1 per 100 chars
+```
+
+### Code Detection
+
+```typescript
+// Code blocks indicate technical complexity
+if (/```[\s\S]*```/.test(message)) score += 0.2;
+```
+
+**Rust implementation:**
+```rust
+if content.contains("```") || content.contains("function") || content.contains("class") {
+    score += 20;
+}
+```
+
+### Keyword Analysis
+
+```typescript
+// Technical verbs suggest complex tasks
+if (/\b(analyze|architect|design|implement|refactor|debug)\b/i.test(message)) {
+  score += 0.15;
+}
+
+// Simple greetings reduce complexity
+if (/\b(hi|hello|thanks|yes|no|ok)\b/i.test(message) && len < 30) {
+  score -= 0.2;
+}
+```
+
+**Rust implementation:**
+```rust
+if content.contains("analyze") || content.contains("compare") || content.contains("design") {
+    score += 15;
+}
+```
+
+### Tool Count
+
+```typescript
+// More tools = more complex agent loop
+if (toolCount > 10) score += 0.2;
+else if (toolCount > 3) score += 0.1;
+```
+
+**Rust implementation:**
+```rust
+score += (tools.len() as u32) * 5;  // +5 per tool
+```
+
+### Conversation History
+
+```rust
+if messages.len() > 10 { 
+    score += 10;  // Long conversations may need context
+}
+```
+
+### Final Normalization
+
+```typescript
+// Normalize to 0-1 range with baseline of 0.4
+return Math.max(0, Math.min(1, score + 0.4));
+```
+
+## Scoring Examples
+
+<Accordion title="Low Complexity (0-10) → Haiku/Mini">
+```typescript
+// Example 1: Simple greeting
+message: "Hi, how are you?"
+toolCount: 0
+// Score: 0 (len < 50 = -0.1, greeting = -0.2, baseline = +0.4) = 0.1
+// Model: claude-haiku-4-5
+
+// Example 2: Short question
+message: "What is the capital of France?"
+toolCount: 2
+// Score: 0.1 (baseline) + 0.1 (tools) = 0.2
+// Model: claude-haiku-4-5
+```
+</Accordion>
+
+<Accordion title="Medium Complexity (11-40) → Sonnet/GPT-4o">
+```typescript
+// Example 1: Code request
+message: "Write a function to validate email addresses"
+toolCount: 5
+// Score: 0.4 (baseline) + 0.2 (code keyword) + 0.1 (tools) = 0.7
+// Model: claude-sonnet-4-6
+
+// Example 2: Analysis task
+message: "Analyze this data and provide insights: [500 chars of data]"
+toolCount: 8
+// Score: 0.4 + 0.15 (len) + 0.15 (analyze) + 0.1 (tools) = 0.8
+// Model: claude-sonnet-4-6
+```
+</Accordion>
+
+<Accordion title="High Complexity (41+) → Opus/o3">
+```typescript
+// Example 1: Complex refactoring
+message: "Analyze this 2000-line codebase, identify design patterns, and refactor for better maintainability: ```[code]```"
+toolCount: 15
+// Score: 0.4 + 0.3 (len) + 0.2 (code) + 0.15 (analyze/refactor) + 0.2 (tools) = 1.25
+// Model: claude-opus-4-6
+
+// Example 2: Multi-step architecture
+message: "Design a distributed system architecture for handling 1M requests/day with these requirements: [detailed specs]"
+toolCount: 12
+// Score: 0.4 + 0.15 (len) + 0.15 (design) + 0.2 (tools) = 0.9
+// Model: claude-opus-4-6
+```
+</Accordion>
+
+## Manual Override
+
+You can bypass routing and specify a model directly:
+
+```typescript
+// Override with explicit model
+const result = await trigger('llm::complete', {
+  model: {
+    provider: 'openai',
+    model: 'gpt-4o',
+    maxTokens: 8192
+  },
+  messages: [...]
+});
+
+// Or use routing with preferred model hint
+const selection = await trigger('llm::route', {
+  message: 'Hello',
+  toolCount: 0,
+  config: {
+    model: 'gpt-4o',      // Forces GPT-4o
+    provider: 'openai',
+    maxTokens: 4096
+  }
+});
+```
+
+## Cost Optimization
+
+The routing system optimizes costs by:
+
+1. **Avoiding over-provisioning**: Simple tasks use fast/cheap models
+2. **Automatic scaling**: Complex tasks get frontier models
+3. **Usage tracking**: All calls tracked with cost attribution
+
+### Cost Comparison Example
+
+```typescript
+// Scenario: 1000 simple queries + 100 complex queries
+
+// With routing:
+// - 1000 × Haiku ($0.8/$4 per 1M tokens) ≈ $2.40
+// - 100 × Opus ($15/$75 per 1M tokens) ≈ $4.50
+// Total: ~$6.90
+
+// Without routing (all Opus):
+// - 1100 × Opus ≈ $49.50
+
+// Savings: 86%
+```
+
+## Fallback & Retry
+
+The completion system includes automatic retry logic:
+
+```typescript:src/llm-router.ts
+for (let attempt = 0; attempt < 3; attempt++) {
+  try {
+    const result = await callProvider(req);
+    return { ...result, durationMs };
+  } catch (err: any) {
+    lastError = err;
+    if (err.status === 429) {
+      await sleep(Math.pow(2, attempt) * 1000);  // Exponential backoff
+      continue;
+    }
+    throw err;
+  }
+}
+```
+
+**Retry strategy:**
+- **Attempt 1**: Immediate
+- **Attempt 2**: Wait 2s (if 429 rate limit)
+- **Attempt 3**: Wait 4s (if 429 rate limit)
+- **Failure**: Throw last error
+
+## Provider Drivers
+
+The Rust router supports multiple provider drivers:
+
+```rust
+enum Driver {
+    Anthropic,      // Native Anthropic Messages API
+    OpenAiCompat,   // OpenAI-compatible providers
+    Gemini,         // Google Gemini API
+    Bedrock,        // AWS Bedrock
+}
+```
+
+Each driver handles:
+- Authentication (API keys, AWS credentials)
+- Request formatting (messages, tools, system prompts)
+- Response parsing (content, tool calls, usage)
+- Error handling (rate limits, timeouts)
+
+## Usage Statistics
+
+```typescript
+// Get routing statistics
+const stats = await trigger('llm::usage', {});
+
+// Returns:
+// {
+//   "stats": [
+//     {
+//       "provider": "anthropic",
+//       "model": "claude-haiku-4-5",
+//       "input_tokens": 45000,
+//       "output_tokens": 12000,
+//       "requests": 234
+//     },
+//     {
+//       "provider": "anthropic",
+//       "model": "claude-sonnet-4-6",
+//       "input_tokens": 120000,
+//       "output_tokens": 45000,
+//       "requests": 89
+//     }
+//   ]
+// }
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Trust the Router" icon="check">
+    Let complexity scoring choose the model for most use cases
+  </Card>
+  <Card title="Monitor Costs" icon="chart-line">
+    Review usage stats regularly to identify optimization opportunities
+  </Card>
+  <Card title="Use Overrides Sparingly" icon="hand">
+    Only override routing for specialized tasks (e.g., always use Sonar for search)
+  </Card>
+  <Card title="Tune for Your Domain" icon="sliders">
+    Adjust complexity thresholds based on your specific workload
+  </Card>
+</CardGroup>
+
+## Customizing Routing
+
+You can customize the routing logic by:
+
+### 1. Adjusting Thresholds
+
+```typescript
+// Current thresholds (TypeScript)
+if (score < 0.3) return haiku;
+if (score < 0.7) return sonnet;
+return opus;
+
+// Custom: More aggressive Opus usage
+if (score < 0.3) return haiku;
+if (score < 0.5) return sonnet;  // Lower threshold
+return opus;
+```
+
+### 2. Adding Custom Scoring
+
+```typescript
+function scoreComplexity(message: string, toolCount: number): number {
+  let score = 0;
+  
+  // Existing logic...
+  
+  // Custom: Boost score for database queries
+  if (/\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(message)) {
+    score += 0.2;
+  }
+  
+  // Custom: Reduce score for cached responses
+  if (message.startsWith('[CACHED]')) {
+    score -= 0.3;
+  }
+  
+  return Math.max(0, Math.min(1, score + 0.4));
+}
+```
+
+### 3. Provider-Specific Routing
+
+```typescript
+function selectProvider(complexity: number, domain: string) {
+  // Route search queries to Perplexity
+  if (domain === 'search') {
+    return { provider: 'perplexity', model: 'sonar-pro' };
+  }
+  
+  // Route code to DeepSeek
+  if (domain === 'code' && complexity < 0.7) {
+    return { provider: 'deepseek', model: 'deepseek-chat' };
+  }
+  
+  // Default routing
+  return defaultRouting(complexity);
+}
+```
+
+## Performance Metrics
+
+Typical routing overhead:
+
+- **Complexity scoring**: Less than 1ms
+- **Model selection**: Less than 1ms
+- **Total routing latency**: Less than 5ms
+
+This is negligible compared to LLM inference (500ms - 30s).
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Setup" icon="server" href="/api/llm/providers">
+    Configure API keys for all providers
+  </Card>
+  <Card title="Model Catalog" icon="database" href="/api/llm/models">
+    Browse all 47 available models
+  </Card>
+</CardGroup>

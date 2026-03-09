@@ -1,0 +1,688 @@
+---
+title: MCP Integrations
+description: 25 Model Context Protocol integrations for GitHub, Slack, Jira, databases, cloud providers, and more
+---
+
+AgentOS includes **25 pre-configured MCP (Model Context Protocol) integrations** that connect agents to external services via standardized stdio-based servers.
+
+Integrations enable agents to interact with GitHub repos, Slack workspaces, Jira projects, databases, cloud APIs, and more — without custom tool code.
+
+## Quick Start
+
+```bash
+# List available integrations
+agentos integrations
+
+# Add an integration
+agentos add github --key $GITHUB_TOKEN
+
+# Add with environment variables
+export SLACK_BOT_TOKEN=xoxb-...
+agentos add slack
+
+# Test integration
+agentos integration test github
+
+# Remove integration
+agentos remove github
+```
+
+## How MCP Works
+
+MCP integrations run as **stdio-based child processes** that expose tools to agents:
+
+```
+┌─────────────┐
+│   Agent     │
+│  (Rust/TS)  │
+└──────┬──────┘
+       │
+       │ MCP Protocol (JSON-RPC over stdio)
+       │
+┌──────▼──────────────────────────────────┐
+│  @modelcontextprotocol/server-github    │
+│  (Node.js subprocess)                   │
+└──────┬──────────────────────────────────┘
+       │
+       │ GitHub REST API
+       │
+┌──────▼──────┐
+│   GitHub    │
+└─────────────┘
+```
+
+Agents send tool calls via JSON-RPC, the MCP server executes the operation, and returns results.
+
+## Developer Tools
+
+Integrations for source control, project management, and CI/CD.
+
+<CardGroup cols={2}>
+  <Card title="GitHub" icon="github">
+    **Repository management** — access repos, issues, pull requests, and GitHub Actions.
+    
+    ```bash
+    agentos add github --key $GITHUB_TOKEN
+    ```
+    
+    **Capabilities**: Create issues, comment on PRs, trigger workflows, search code
+    
+    **OAuth**: Supported (scopes: `repo`, `read:org`)
+  </Card>
+
+  <Card title="GitLab" icon="gitlab">
+    **GitLab project management** — manage repos, merge requests, pipelines, and issues.
+    
+    ```bash
+    export GITLAB_PERSONAL_ACCESS_TOKEN=glpat-...
+    export GITLAB_URL=https://gitlab.com
+    agentos add gitlab
+    ```
+    
+    **Capabilities**: Create MRs, approve pipelines, manage labels, search projects
+  </Card>
+
+  <Card title="Bitbucket" icon="bitbucket">
+    **Bitbucket repository access** — manage repos, pull requests, and pipelines.
+    
+    ```bash
+    export BITBUCKET_USERNAME=user
+    export BITBUCKET_APP_PASSWORD=...
+    agentos add bitbucket
+    ```
+    
+    **Capabilities**: Create PRs, manage branches, trigger pipelines
+  </Card>
+
+  <Card title="Jira" icon="jira">
+    **Issue tracking and sprint management** — create/update issues, manage sprints, query boards.
+    
+    ```bash
+    export JIRA_URL=https://your-domain.atlassian.net
+    export JIRA_EMAIL=user@example.com
+    export JIRA_API_TOKEN=...
+    agentos add jira
+    ```
+    
+    **Capabilities**: Create/update issues, transition status, manage sprints
+  </Card>
+
+  <Card title="Linear" icon="linear">
+    **Modern issue tracking** — create issues, update status, manage projects.
+    
+    ```bash
+    agentos add linear --key $LINEAR_API_KEY
+    ```
+    
+    **Capabilities**: Create issues, update status, assign to team members
+  </Card>
+
+  <Card title="Sentry" icon="sentry">
+    **Error monitoring** — query errors, update issue status, create releases.
+    
+    ```bash
+    export SENTRY_AUTH_TOKEN=...
+    export SENTRY_ORG=my-org
+    agentos add sentry
+    ```
+    
+    **Capabilities**: Query errors, resolve issues, track releases
+  </Card>
+</CardGroup>
+
+## Communication Platforms
+
+Integrations for team collaboration and messaging.
+
+<CardGroup cols={2}>
+  <Card title="Slack" icon="slack">
+    **Workspace messaging** — send messages, read channels, manage conversations.
+    
+    ```bash
+    export SLACK_BOT_TOKEN=xoxb-...
+    agentos add slack
+    ```
+    
+    **Capabilities**: Send messages, list channels, read conversations, upload files
+    
+    **OAuth**: Supported (scopes: `channels:read`, `chat:write`, `users:read`)
+  </Card>
+
+  <Card title="Discord" icon="discord">
+    **Discord bot integration** — send messages, read channels, manage roles.
+    
+    ```bash
+    export DISCORD_BOT_TOKEN=...
+    agentos add discord-mcp
+    ```
+    
+    **Capabilities**: Send messages, manage channels, read message history
+  </Card>
+
+  <Card title="Microsoft Teams" icon="microsoft">
+    **Teams messaging** — send messages, read conversations, manage channels.
+    
+    ```bash
+    export TEAMS_TENANT_ID=...
+    export TEAMS_CLIENT_ID=...
+    export TEAMS_CLIENT_SECRET=...
+    agentos add teams-mcp
+    ```
+    
+    **Capabilities**: Send messages, list teams, read channels
+  </Card>
+</CardGroup>
+
+## Productivity & Storage
+
+Integrations for documents, calendars, and file storage.
+
+<CardGroup cols={2}>
+  <Card title="Notion" icon="notion">
+    **Workspace knowledge base** — read/write pages, query databases, manage blocks.
+    
+    ```bash
+    export NOTION_API_KEY=secret_...
+    agentos add notion
+    ```
+    
+    **Capabilities**: Create pages, update databases, search workspace
+  </Card>
+
+  <Card title="Google Drive" icon="google-drive">
+    **File storage and collaboration** — list files, upload/download, manage permissions.
+    
+    ```bash
+    export GOOGLE_DRIVE_CREDENTIALS='{...}'
+    agentos add google-drive
+    ```
+    
+    **Capabilities**: List files, upload/download, share files, manage folders
+  </Card>
+
+  <Card title="Gmail" icon="envelope">
+    **Email management** — send emails, read threads, manage labels.
+    
+    ```bash
+    export GMAIL_CREDENTIALS='{...}'
+    agentos add gmail
+    ```
+    
+    **Capabilities**: Send emails, read messages, manage labels, search threads
+  </Card>
+
+  <Card title="Google Calendar" icon="calendar">
+    **Calendar management** — create events, list schedules, manage attendees.
+    
+    ```bash
+    export GOOGLE_CALENDAR_CREDENTIALS='{...}'
+    agentos add google-calendar
+    ```
+    
+    **Capabilities**: Create events, list calendars, update attendees
+  </Card>
+
+  <Card title="Dropbox" icon="dropbox">
+    **File storage** — upload/download files, manage folders, share links.
+    
+    ```bash
+    export DROPBOX_ACCESS_TOKEN=...
+    agentos add dropbox
+    ```
+    
+    **Capabilities**: Upload/download, list files, create shared links
+  </Card>
+
+  <Card title="Todoist" icon="list-check">
+    **Task management** — create tasks, manage projects, track completion.
+    
+    ```bash
+    export TODOIST_API_TOKEN=...
+    agentos add todoist
+    ```
+    
+    **Capabilities**: Create/update tasks, manage projects, set priorities
+  </Card>
+</CardGroup>
+
+## Cloud Providers
+
+Integrations for AWS, Azure, and GCP infrastructure management.
+
+<CardGroup cols={2}>
+  <Card title="AWS" icon="aws">
+    **Amazon Web Services** — manage EC2, S3, Lambda, and other AWS services.
+    
+    ```bash
+    export AWS_ACCESS_KEY_ID=...
+    export AWS_SECRET_ACCESS_KEY=...
+    export AWS_REGION=us-east-1
+    agentos add aws
+    ```
+    
+    **Capabilities**: EC2 management, S3 operations, Lambda invocation, CloudWatch queries
+  </Card>
+
+  <Card title="Azure" icon="microsoft">
+    **Microsoft Azure** — manage VMs, storage, functions, and Azure resources.
+    
+    ```bash
+    export AZURE_SUBSCRIPTION_ID=...
+    export AZURE_TENANT_ID=...
+    export AZURE_CLIENT_ID=...
+    export AZURE_CLIENT_SECRET=...
+    agentos add azure-mcp
+    ```
+    
+    **Capabilities**: Resource management, VM operations, storage access
+  </Card>
+
+  <Card title="GCP" icon="google">
+    **Google Cloud Platform** — manage Compute Engine, Cloud Storage, Cloud Functions.
+    
+    ```bash
+    export GCP_PROJECT_ID=my-project
+    export GCP_CREDENTIALS='{...}'
+    agentos add gcp-mcp
+    ```
+    
+    **Capabilities**: VM management, storage operations, function deployment
+  </Card>
+</CardGroup>
+
+## Databases
+
+Integrations for SQL and NoSQL database access.
+
+<CardGroup cols={2}>
+  <Card title="PostgreSQL" icon="database">
+    **PostgreSQL database** — query and manage PostgreSQL databases.
+    
+    ```bash
+    export POSTGRES_CONNECTION_STRING="postgresql://user:pass@host:5432/db"
+    agentos add postgresql
+    ```
+    
+    **Capabilities**: Execute queries, list tables, describe schema
+  </Card>
+
+  <Card title="MongoDB" icon="database">
+    **MongoDB database** — query documents, manage collections, run aggregations.
+    
+    ```bash
+    export MONGODB_URI="mongodb://user:pass@host:27017/db"
+    agentos add mongodb
+    ```
+    
+    **Capabilities**: Query documents, insert/update, run aggregations
+  </Card>
+
+  <Card title="Redis" icon="database">
+    **Redis cache** — get/set keys, manage data structures, run commands.
+    
+    ```bash
+    export REDIS_URL="redis://host:6379"
+    agentos add redis
+    ```
+    
+    **Capabilities**: Get/set keys, list operations, pub/sub
+  </Card>
+
+  <Card title="SQLite" icon="database">
+    **SQLite database** — query local SQLite databases.
+    
+    ```bash
+    export SQLITE_DB_PATH="/path/to/database.db"
+    agentos add sqlite-mcp
+    ```
+    
+    **Capabilities**: Execute queries, list tables, describe schema
+  </Card>
+
+  <Card title="Elasticsearch" icon="magnifying-glass">
+    **Search and analytics** — query indices, manage documents, run aggregations.
+    
+    ```bash
+    export ELASTICSEARCH_URL="https://localhost:9200"
+    export ELASTICSEARCH_API_KEY=...
+    agentos add elasticsearch
+    ```
+    
+    **Capabilities**: Search indices, index documents, run aggregations
+  </Card>
+</CardGroup>
+
+## Search Engines
+
+Integrations for web search and knowledge retrieval.
+
+<CardGroup cols={2}>
+  <Card title="Brave Search" icon="magnifying-glass">
+    **Privacy-focused search** — web search with Brave Search API.
+    
+    ```bash
+    agentos add brave-search --key $BRAVE_API_KEY
+    ```
+    
+    **Capabilities**: Web search, news search, image search
+  </Card>
+
+  <Card title="Exa Search" icon="magnifying-glass">
+    **AI-powered search** — semantic search with Exa (formerly Metaphor).
+    
+    ```bash
+    agentos add exa-search --key $EXA_API_KEY
+    ```
+    
+    **Capabilities**: Semantic web search, content extraction, similarity search
+  </Card>
+</CardGroup>
+
+## Integration Configuration
+
+Integrations are defined in TOML format:
+
+```toml
+[integration]
+id = "github"
+name = "GitHub"
+description = "Access GitHub repositories, issues, pull requests, and actions"
+category = "developer"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+
+[integration.env]
+GITHUB_PERSONAL_ACCESS_TOKEN = { required = true, description = "GitHub personal access token with repo scope" }
+
+[integration.oauth]
+enabled = true
+provider = "github"
+scopes = ["repo", "read:org"]
+```
+
+## Adding Integrations
+
+<Accordion title="Using API key">
+  ```bash
+  # Via command line flag
+  agentos add github --key $GITHUB_TOKEN
+  
+  # Via interactive prompt
+  agentos add github
+  # Prompt: Enter GITHUB_PERSONAL_ACCESS_TOKEN: █
+  ```
+</Accordion>
+
+<Accordion title="Using environment variables">
+  ```bash
+  # Set environment variables first
+  export SLACK_BOT_TOKEN=xoxb-...
+  export SLACK_TEAM_ID=T123456
+  
+  # Add integration
+  agentos add slack
+  ```
+</Accordion>
+
+<Accordion title="Using OAuth flow">
+  ```bash
+  # Start OAuth flow (opens browser)
+  agentos add github --oauth
+  
+  # Agent will redirect to auth page
+  # After approval, token is stored securely
+  ```
+</Accordion>
+
+<Accordion title="From configuration file">
+  ```bash
+  # Create custom integration
+  cat > my-integration.toml <<EOF
+  [integration]
+  id = "custom-api"
+  name = "Custom API"
+  transport = "stdio"
+  command = "node"
+  args = ["./custom-mcp-server.js"]
+  
+  [integration.env]
+  API_KEY = { required = true }
+  EOF
+  
+  # Install integration
+  agentos integration install my-integration.toml --key $API_KEY
+  ```
+</Accordion>
+
+## Testing Integrations
+
+```bash
+# Test connection and list available tools
+agentos integration test github
+
+# Output:
+# ✓ Connected to GitHub MCP server
+# ✓ Available tools:
+#   - github_create_issue
+#   - github_list_repos
+#   - github_search_code
+#   ...
+
+# Test with specific tool invocation
+agentos integration test github --tool github_list_repos
+```
+
+## Managing Integrations
+
+<Accordion title="List installed integrations">
+  ```bash
+  agentos integration list
+  agentos integration list --category developer
+  agentos integration list --format json
+  ```
+</Accordion>
+
+<Accordion title="View integration details">
+  ```bash
+  agentos integration describe github
+  
+  # Output shows:
+  # - Available tools
+  # - Required environment variables
+  # - OAuth configuration
+  # - Connection status
+  ```
+</Accordion>
+
+<Accordion title="Update integration credentials">
+  ```bash
+  agentos integration update github --key $NEW_GITHUB_TOKEN
+  ```
+</Accordion>
+
+<Accordion title="Remove integration">
+  ```bash
+  agentos remove github
+  agentos integration remove github --confirm
+  ```
+</Accordion>
+
+## Agent Integration Access
+
+Control which integrations an agent can use:
+
+```toml
+[agent.capabilities]
+# Grant access to all GitHub tools
+tools = ["github::*"]
+
+# Grant access to specific tools only
+tools = [
+  "github::github_create_issue",
+  "github::github_list_repos"
+]
+
+# Grant access to multiple integrations
+tools = [
+  "github::*",
+  "slack::*",
+  "jira::*"
+]
+```
+
+## Security Best Practices
+
+<Card title="Credential Storage" icon="lock">
+  All API keys and tokens are stored in the **encrypted vault** using AES-256-GCM with PBKDF2 key derivation.
+</Card>
+
+<Card title="Least Privilege" icon="shield">
+  Grant agents access only to specific integration tools they need, not wildcard access.
+</Card>
+
+<Card title="Token Rotation" icon="rotate">
+  Regularly rotate API tokens and update integrations using `agentos integration update`.
+</Card>
+
+<Card title="OAuth Preferred" icon="key">
+  Use OAuth flows when available for automatic token refresh and scope management.
+</Card>
+
+<Card title="Environment Isolation" icon="layer-group">
+  Use different credentials for development, staging, and production realms.
+</Card>
+
+## Creating Custom Integrations
+
+Build custom MCP servers for proprietary APIs:
+
+<CodeGroup>
+```typescript custom-mcp-server.ts
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+
+const server = new Server(
+  {
+    name: 'custom-api-server',
+    version: '1.0.0',
+  },
+  {
+    capabilities: {
+      tools: {},
+    },
+  }
+);
+
+// Register tools
+server.setRequestHandler('tools/list', async () => ({
+  tools: [
+    {
+      name: 'custom_api_call',
+      description: 'Call custom API endpoint',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          endpoint: { type: 'string' },
+          method: { type: 'string', enum: ['GET', 'POST'] }
+        },
+        required: ['endpoint']
+      }
+    }
+  ]
+}));
+
+server.setRequestHandler('tools/call', async (request) => {
+  if (request.params.name === 'custom_api_call') {
+    // Implement API call logic
+    const result = await fetch(...);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+  }
+});
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
+```
+
+```toml custom-api.toml
+[integration]
+id = "custom-api"
+name = "Custom API"
+description = "Integration with internal API"
+category = "custom"
+transport = "stdio"
+command = "npx"
+args = ["tsx", "./custom-mcp-server.ts"]
+
+[integration.env]
+CUSTOM_API_KEY = { required = true, description = "API key for custom service" }
+CUSTOM_API_URL = { required = true, description = "Base URL for API" }
+```
+
+```bash Install
+agentos integration install custom-api.toml \
+  --key $CUSTOM_API_KEY \
+  --env CUSTOM_API_URL=https://api.example.com
+```
+</CodeGroup>
+
+## Troubleshooting
+
+<Accordion title="Integration won't connect">
+  ```bash
+  # Check integration status
+  agentos integration status github
+  
+  # View detailed logs
+  agentos logs --filter integration=github --lines 50
+  
+  # Test with verbose output
+  agentos integration test github --verbose
+  ```
+</Accordion>
+
+<Accordion title="Missing tools in agent">
+  ```bash
+  # Verify agent has tool access
+  agentos agent describe my-agent | grep capabilities
+  
+  # Grant integration access
+  # Edit agent.toml:
+  [agent.capabilities]
+  tools = ["github::*"]
+  
+  # Reload agent
+  agentos agent reload my-agent
+  ```
+</Accordion>
+
+<Accordion title="Rate limit errors">
+  Most integrations respect rate limits. Check provider documentation:
+  
+  - **GitHub**: 5,000 requests/hour (authenticated)
+  - **Slack**: Tier-based limits
+  - **Jira**: 5 requests/second per user
+  
+  Configure rate limiting in agent capabilities:
+  ```toml
+  [agent.resources]
+  max_requests_per_hour = 1000
+  ```
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agent Templates" icon="robot" href="/templates/agents">
+    Configure agents to use integrations
+  </Card>
+  <Card title="Tool Profiles" icon="toolbox" href="/customize/tool-profiles">
+    Filter integration tools by profile
+  </Card>
+  <Card title="Vault" icon="lock" href="/security/vault">
+    Secure credential storage
+  </Card>
+  <Card title="MCP Specification" icon="book" href="https://modelcontextprotocol.io">
+    Learn the MCP protocol specification
+  </Card>
+</CardGroup>

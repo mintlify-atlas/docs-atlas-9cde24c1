@@ -1,0 +1,557 @@
+---
+title: Workflow API
+description: REST API endpoints for creating, running, and managing multi-step workflows
+---
+
+The Workflow API enables you to create and execute multi-step agent workflows with support for sequential, parallel, conditional, and loop execution modes.
+
+## Workflow Concepts
+
+Workflows in AgentOS support five execution modes:
+
+- **Sequential**: Steps execute one after another, with output passed to the next step
+- **Fanout**: Multiple steps execute in parallel
+- **Collect**: Aggregates results from fanout steps
+- **Conditional**: Step executes only if a condition is met
+- **Loop**: Repeats a step until a condition is met or max iterations reached
+
+## List Workflows
+
+Get all registered workflows.
+
+```
+GET /api/workflows
+```
+
+### Response
+
+<ResponseField name="workflows" type="array">
+  Array of workflow objects with their configurations.
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+
+```bash cURL
+curl -X GET http://localhost:3111/api/workflows \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    "http://localhost:3111/api/workflows",
+    headers={"Authorization": "Bearer YOUR_API_KEY"}
+)
+
+workflows = response.json()
+for wf in workflows:
+    print(f"{wf['id']}: {wf['name']} ({len(wf['steps'])} steps)")
+```
+
+```typescript TypeScript
+const response = await fetch('http://localhost:3111/api/workflows', {
+  headers: {
+    'Authorization': 'Bearer YOUR_API_KEY'
+  }
+});
+
+const workflows = await response.json();
+console.log(workflows);
+```
+
+</CodeGroup>
+
+## Create Workflow
+
+Register a new workflow definition.
+
+```
+POST /api/workflows
+```
+
+### Request
+
+<ParamField path="id" type="string">
+  Optional workflow ID. Auto-generated if not provided.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  The name of the workflow.
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  Description of what the workflow does.
+</ParamField>
+
+<ParamField path="steps" type="array" required>
+  Array of workflow step objects.
+  
+  <Expandable title="Step Object">
+    <ParamField path="name" type="string" required>
+      Name of the step.
+    </ParamField>
+    
+    <ParamField path="functionId" type="string" required>
+      The function to execute (e.g., `agent::chat`, `tools::web_search`).
+    </ParamField>
+    
+    <ParamField path="mode" type="string" required>
+      Execution mode: `sequential`, `fanout`, `collect`, `conditional`, or `loop`.
+    </ParamField>
+    
+    <ParamField path="promptTemplate" type="string">
+      Template string with `{{variable}}` placeholders for variable interpolation.
+    </ParamField>
+    
+    <ParamField path="timeoutMs" type="number" default={30000}>
+      Timeout in milliseconds for this step.
+    </ParamField>
+    
+    <ParamField path="errorMode" type="string" default="fail">
+      Error handling: `fail`, `skip`, or `retry`.
+    </ParamField>
+    
+    <ParamField path="maxRetries" type="number" default={3}>
+      Maximum retry attempts when errorMode is `retry`.
+    </ParamField>
+    
+    <ParamField path="outputVar" type="string">
+      Variable name to store the step's output.
+    </ParamField>
+    
+    <ParamField path="condition" type="string">
+      Condition string for conditional mode (checks if previous output contains this string).
+    </ParamField>
+    
+    <ParamField path="maxIterations" type="number" default={10}>
+      Maximum iterations for loop mode.
+    </ParamField>
+    
+    <ParamField path="until" type="string">
+      Exit condition for loop mode (stops when output contains this string).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  The unique identifier for the created workflow.
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST http://localhost:3111/api/workflows \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "research-and-summarize",
+    "description": "Research a topic and create a summary",
+    "steps": [
+      {
+        "name": "research",
+        "functionId": "tools::web_search",
+        "mode": "sequential",
+        "promptTemplate": "{{input}}",
+        "timeoutMs": 30000,
+        "errorMode": "retry",
+        "maxRetries": 3,
+        "outputVar": "searchResults"
+      },
+      {
+        "name": "summarize",
+        "functionId": "agent::chat",
+        "mode": "sequential",
+        "promptTemplate": "Summarize these search results: {{searchResults}}",
+        "timeoutMs": 60000,
+        "errorMode": "fail"
+      }
+    ]
+  }'
+```
+
+```python Python
+import requests
+
+workflow = {
+    "name": "research-and-summarize",
+    "description": "Research a topic and create a summary",
+    "steps": [
+        {
+            "name": "research",
+            "functionId": "tools::web_search",
+            "mode": "sequential",
+            "promptTemplate": "{{input}}",
+            "timeoutMs": 30000,
+            "errorMode": "retry",
+            "maxRetries": 3,
+            "outputVar": "searchResults"
+        },
+        {
+            "name": "summarize",
+            "functionId": "agent::chat",
+            "mode": "sequential",
+            "promptTemplate": "Summarize: {{searchResults}}",
+            "timeoutMs": 60000,
+            "errorMode": "fail"
+        }
+    ]
+}
+
+response = requests.post(
+    "http://localhost:3111/api/workflows",
+    headers={
+        "Authorization": "Bearer YOUR_API_KEY",
+        "Content-Type": "application/json"
+    },
+    json=workflow
+)
+
+result = response.json()
+print(f"Created workflow: {result['id']}")
+```
+
+```typescript TypeScript
+const workflow = {
+  name: 'research-and-summarize',
+  description: 'Research a topic and create a summary',
+  steps: [
+    {
+      name: 'research',
+      functionId: 'tools::web_search',
+      mode: 'sequential',
+      promptTemplate: '{{input}}',
+      timeoutMs: 30000,
+      errorMode: 'retry',
+      maxRetries: 3,
+      outputVar: 'searchResults'
+    },
+    {
+      name: 'summarize',
+      functionId: 'agent::chat',
+      mode: 'sequential',
+      promptTemplate: 'Summarize: {{searchResults}}',
+      timeoutMs: 60000,
+      errorMode: 'fail'
+    }
+  ]
+};
+
+const response = await fetch('http://localhost:3111/api/workflows', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer YOUR_API_KEY',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify(workflow)
+});
+
+const result = await response.json();
+console.log(`Created workflow: ${result.id}`);
+```
+
+</CodeGroup>
+
+## Run Workflow
+
+Execute a workflow with input data.
+
+```
+POST /api/workflows/run
+```
+
+### Request
+
+<ParamField path="workflowId" type="string" required>
+  The ID of the workflow to execute.
+</ParamField>
+
+<ParamField path="input" type="any" required>
+  Input data to pass to the workflow. Available as `{{input}}` in step templates.
+</ParamField>
+
+<ParamField path="agentId" type="string">
+  Optional agent ID for capability checks on workflow steps.
+</ParamField>
+
+### Response
+
+<ResponseField name="runId" type="string">
+  Unique identifier for this workflow run.
+</ResponseField>
+
+<ResponseField name="results" type="array">
+  Array of step results.
+  
+  <Expandable title="Result Object">
+    <ResponseField name="stepName" type="string">
+      Name of the step that executed.
+    </ResponseField>
+    
+    <ResponseField name="output" type="any">
+      The output produced by the step.
+    </ResponseField>
+    
+    <ResponseField name="durationMs" type="number">
+      Execution time in milliseconds.
+    </ResponseField>
+    
+    <ResponseField name="error" type="string">
+      Error message if the step failed.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="vars" type="object">
+  Final state of all workflow variables.
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST http://localhost:3111/api/workflows/run \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflowId": "wf-123",
+    "input": "Latest developments in quantum computing",
+    "agentId": "agent-456"
+  }'
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    "http://localhost:3111/api/workflows/run",
+    headers={
+        "Authorization": "Bearer YOUR_API_KEY",
+        "Content-Type": "application/json"
+    },
+    json={
+        "workflowId": "wf-123",
+        "input": "Latest developments in quantum computing",
+        "agentId": "agent-456"
+    }
+)
+
+result = response.json()
+print(f"Run ID: {result['runId']}")
+for step in result['results']:
+    print(f"{step['stepName']}: {step['durationMs']}ms")
+    print(f"Output: {step['output']}")
+```
+
+```typescript TypeScript
+const response = await fetch('http://localhost:3111/api/workflows/run', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer YOUR_API_KEY',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    workflowId: 'wf-123',
+    input: 'Latest developments in quantum computing',
+    agentId: 'agent-456'
+  })
+});
+
+const result = await response.json();
+console.log(`Run ID: ${result.runId}`);
+result.results.forEach(step => {
+  console.log(`${step.stepName}: ${step.durationMs}ms`);
+});
+```
+
+</CodeGroup>
+
+### Response Example
+
+```json
+{
+  "runId": "run-a1b2c3d4",
+  "results": [
+    {
+      "stepName": "research",
+      "output": {
+        "results": [
+          {"title": "Quantum Computing Breakthrough", "url": "..."}
+        ]
+      },
+      "durationMs": 1250
+    },
+    {
+      "stepName": "summarize",
+      "output": "Recent quantum computing advances include...",
+      "durationMs": 3420
+    }
+  ],
+  "vars": {
+    "input": "Recent quantum computing advances include...",
+    "searchResults": {"results": [...]}
+  }
+}
+```
+
+## Get Workflow Runs
+
+Retrieve execution history for a workflow.
+
+```
+GET /api/workflows/:id/runs
+```
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  The workflow ID.
+</ParamField>
+
+### Query Parameters
+
+<ParamField path="limit" type="number" default={50}>
+  Maximum number of runs to return (1-100).
+</ParamField>
+
+<ParamField path="offset" type="number" default={0}>
+  Number of runs to skip for pagination.
+</ParamField>
+
+### Response
+
+<ResponseField name="runs" type="array">
+  Array of workflow run objects.
+</ResponseField>
+
+<ResponseField name="total" type="number">
+  Total number of runs for this workflow.
+</ResponseField>
+
+<ResponseField name="limit" type="number">
+  The limit used for this request.
+</ResponseField>
+
+<ResponseField name="offset" type="number">
+  The offset used for this request.
+</ResponseField>
+
+## Advanced Workflow Examples
+
+### Parallel Processing with Fanout/Collect
+
+```json
+{
+  "name": "multi-source-research",
+  "description": "Search multiple sources in parallel",
+  "steps": [
+    {
+      "name": "search-web",
+      "functionId": "tools::web_search",
+      "mode": "fanout",
+      "promptTemplate": "{{input}}",
+      "timeoutMs": 30000,
+      "outputVar": "webResults"
+    },
+    {
+      "name": "search-academic",
+      "functionId": "tools::academic_search",
+      "mode": "fanout",
+      "promptTemplate": "{{input}}",
+      "timeoutMs": 30000,
+      "outputVar": "academicResults"
+    },
+    {
+      "name": "merge-results",
+      "functionId": "agent::chat",
+      "mode": "collect",
+      "promptTemplate": "Merge these research results: {{__fanout}}",
+      "timeoutMs": 60000
+    }
+  ]
+}
+```
+
+### Conditional Execution
+
+```json
+{
+  "name": "conditional-analysis",
+  "description": "Perform deep analysis only if initial check warrants it",
+  "steps": [
+    {
+      "name": "initial-check",
+      "functionId": "agent::chat",
+      "mode": "sequential",
+      "promptTemplate": "Quick check: {{input}}",
+      "outputVar": "checkResult"
+    },
+    {
+      "name": "deep-analysis",
+      "functionId": "agent::chat",
+      "mode": "conditional",
+      "condition": "needs analysis",
+      "promptTemplate": "Perform deep analysis on: {{input}}",
+      "timeoutMs": 120000
+    }
+  ]
+}
+```
+
+### Loop Until Condition
+
+```json
+{
+  "name": "iterative-refinement",
+  "description": "Refine output until quality threshold is met",
+  "steps": [
+    {
+      "name": "refine",
+      "functionId": "agent::chat",
+      "mode": "loop",
+      "promptTemplate": "Refine this text: {{input}}",
+      "maxIterations": 5,
+      "until": "quality: excellent",
+      "timeoutMs": 60000
+    }
+  ]
+}
+```
+
+## Error Handling
+
+Workflow steps support three error modes:
+
+- **fail**: Stop workflow execution and return error (default)
+- **skip**: Skip the failed step and continue
+- **retry**: Retry the step up to `maxRetries` times before failing
+
+Failed workflow runs store:
+- Run status: `"failed"`
+- Error message
+- Results from successfully completed steps
+- Timestamp of failure
+
+## Rate Limiting
+
+- List workflows: 200 requests/hour
+- Create workflow: 100 requests/hour
+- Run workflow: 100 requests/hour
+
+## Security
+
+When `agentId` is provided in workflow run requests, the system:
+
+1. Checks RBAC capabilities for each step's function
+2. Enforces tool policies
+3. Validates against the agent's allowed capabilities
+4. Records execution in audit log
+
+This ensures workflows respect agent-level security constraints.

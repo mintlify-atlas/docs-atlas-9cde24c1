@@ -1,0 +1,472 @@
+---
+title: 'Mission'
+description: 'Task lifecycle management with state machine and atomic checkout'
+---
+
+The **Mission** crate manages task execution with a state machine, atomic checkout (to prevent double-assignment), comment threads, and directive linkage.
+
+## Overview
+
+- **Purpose:** Task lifecycle with atomic assignment
+- **LOC:** ~350
+- **Functions:** 7 (create, checkout, release, transition, list, comment, comments)
+- **Endpoints:** 7 REST
+- **Source:** `crates/mission/src/main.rs`
+
+## Core Concepts
+
+### Mission Structure
+
+```rust
+struct Mission {
+    id: String,                     // "msn-{uuid}"
+    realm_id: String,
+    directive_id: Option<String>,   // Link to strategic goal
+    parent_id: Option<String>,      // Parent mission for subtasks
+    title: String,
+    description: Option<String>,
+    status: MissionStatus,
+    priority: MissionPriority,
+    assignee_id: Option<String>,    // Current owner
+    created_by: Option<String>,
+    billing_code: Option<String>,
+    version: u32,
+    started_at: Option<String>,
+    completed_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+```
+
+### State Machine
+
+```
+Backlog → Queued → Active → Review → Complete
+   ↓         ↓        ↓
+Blocked   Blocked   Blocked
+   ↓         ↓        ↓
+Cancelled Cancelled Cancelled
+```
+
+**Valid Transitions:**
+- Backlog → Queued, Blocked, Cancelled
+- Queued → Active, Blocked, Cancelled
+- Active → Review, Blocked, Cancelled
+- Review → Complete, Active (rework), Cancelled
+- Blocked → Queued, Cancelled
+
+### Priority Levels
+
+```rust
+enum MissionPriority {
+    Critical,  // P0: Drop everything
+    High,      // P1: Next up
+    Normal,    // P2: Regular work
+    Low,       // P3: When time permits
+}
+```
+
+## Functions
+
+### mission::create
+
+Create a new mission.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="title" type="string" required>
+  Mission title
+</ParamField>
+
+<ParamField path="description" type="string">
+  Detailed description
+</ParamField>
+
+<ParamField path="directiveId" type="string">
+  Link to parent directive
+</ParamField>
+
+<ParamField path="parentId" type="string">
+  Parent mission for subtasks
+</ParamField>
+
+<ParamField path="priority" type="string">
+  "Critical", "High", "Normal", "Low"
+</ParamField>
+
+<ParamField path="createdBy" type="string">
+  Agent or user who created this
+</ParamField>
+
+<ParamField path="billingCode" type="string">
+  Optional billing/project code
+</ParamField>
+
+**Example:**
+
+```rust
+let mission = iii.trigger("mission::create", json!({
+    "realmId": "r-1",
+    "title": "Implement user authentication",
+    "description": "Add JWT-based auth with refresh tokens",
+    "directiveId": "dir-auth-system",
+    "priority": "High",
+    "createdBy": "agent-pm",
+    "billingCode": "PROJ-2024-Q1"
+})).await?;
+
+// Returns:
+// {
+//   "id": "msn-xyz789",
+//   "status": "Backlog",
+//   "priority": "High",
+//   "assigneeId": null,
+//   ...
+// }
+```
+
+**REST Endpoint:**
+```bash
+POST /api/missions
+Content-Type: application/json
+
+{
+  "realmId": "r-1",
+  "title": "Implement user authentication",
+  "priority": "High"
+}
+```
+
+### mission::checkout
+
+Atomically claim a mission for an agent.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="id" type="string" required>
+  Mission ID
+</ParamField>
+
+<ParamField path="agentId" type="string" required>
+  Agent claiming the mission
+</ParamField>
+
+**Example:**
+
+```rust
+let result = iii.trigger("mission::checkout", json!({
+    "realmId": "r-1",
+    "id": "msn-xyz789",
+    "agentId": "agent-dev-1"
+})).await?;
+
+// Success:
+// {
+//   "id": "msn-xyz789",
+//   "status": "Active",
+//   "assigneeId": "agent-dev-1",
+//   "startedAt": "2024-03-09T10:30:00Z",
+//   ...
+// }
+
+// If already assigned:
+// Error: "mission msn-xyz789 already checked out by agent-dev-2"
+```
+
+**REST Endpoint:**
+```bash
+POST /api/missions/msn-xyz789/checkout
+Content-Type: application/json
+
+{
+  "realmId": "r-1",
+  "agentId": "agent-dev-1"
+}
+```
+
+**Atomic Checkout Logic (mission/src/main.rs:85-123):**
+
+```rust
+async fn checkout_mission(iii: &III, req: CheckoutRequest) -> Result<Value, IIIError> {
+    let mut mission = load_mission(iii, &req.realm_id, &req.id).await?;
+
+    // Check if already assigned
+    if mission.assignee_id.is_some() && mission.assignee_id.as_deref() != Some(&req.agent_id) {
+        return Err(IIIError::Handler(format!(
+            "mission {} already checked out by {}",
+            req.id,
+            mission.assignee_id.as_deref().unwrap_or("unknown")
+        )));
+    }
+
+    // Only allow checkout from certain states
+    if !matches!(mission.status, MissionStatus::Backlog | MissionStatus::Queued | MissionStatus::Blocked) {
+        return Err(IIIError::Handler(format!(
+            "cannot checkout mission in {:?} status",
+            mission.status
+        )));
+    }
+
+    let expected_version = mission.version;
+
+    mission.assignee_id = Some(req.agent_id.clone());
+    mission.status = MissionStatus::Active;
+    mission.started_at = Some(chrono::Utc::now().to_rfc3339());
+    mission.version = expected_version + 1;
+    mission.updated_at = chrono::Utc::now().to_rfc3339();
+
+    save_mission(iii, &mission).await?;
+    // ...
+}
+```
+
+### mission::release
+
+Release a mission back to the queue.
+
+```rust
+iii.trigger("mission::release", json!({
+    "realmId": "r-1",
+    "id": "msn-xyz789",
+    "agentId": "agent-dev-1"  // Must be current assignee
+})).await?;
+
+// Returns:
+// {
+//   "released": true,
+//   "missionId": "msn-xyz789"
+// }
+```
+
+**REST Endpoint:**
+```bash
+POST /api/missions/msn-xyz789/release
+```
+
+### mission::transition
+
+Transition mission to a new status.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="id" type="string" required>
+  Mission ID
+</ParamField>
+
+<ParamField path="status" type="string" required>
+  New status (must be valid transition)
+</ParamField>
+
+<ParamField path="agentId" type="string">
+  Agent performing transition
+</ParamField>
+
+<ParamField path="reason" type="string">
+  Optional reason for transition
+</ParamField>
+
+**Example:**
+
+```rust
+// Move to review
+iii.trigger("mission::transition", json!({
+    "realmId": "r-1",
+    "id": "msn-xyz789",
+    "status": "Review",
+    "agentId": "agent-dev-1",
+    "reason": "Implementation complete, ready for code review"
+})).await?;
+
+// Mark complete
+iii.trigger("mission::transition", json!({
+    "realmId": "r-1",
+    "id": "msn-xyz789",
+    "status": "Complete",
+    "agentId": "agent-reviewer"
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+PATCH /api/missions/msn-xyz789/status
+Content-Type: application/json
+
+{
+  "realmId": "r-1",
+  "status": "Review",
+  "reason": "Ready for review"
+}
+```
+
+**State Validation (mission/src/main.rs:146-152):**
+
+```rust
+if !mission.status.can_transition_to(&req.status) {
+    return Err(IIIError::Handler(format!(
+        "invalid transition: {:?} -> {:?}",
+        mission.status, req.status
+    )));
+}
+```
+
+### mission::list
+
+List missions with filtering.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="status" type="string">
+  Filter by status
+</ParamField>
+
+<ParamField path="assigneeId" type="string">
+  Filter by assignee
+</ParamField>
+
+<ParamField path="directiveId" type="string">
+  Filter by linked directive
+</ParamField>
+
+**Example:**
+
+```rust
+// Get all active missions
+let active = iii.trigger("mission::list", json!({
+    "realmId": "r-1",
+    "status": "Active"
+})).await?;
+
+// Get missions assigned to an agent
+let my_missions = iii.trigger("mission::list", json!({
+    "realmId": "r-1",
+    "assigneeId": "agent-dev-1"
+})).await?;
+
+// Get missions for a directive
+let directive_missions = iii.trigger("mission::list", json!({
+    "realmId": "r-1",
+    "directiveId": "dir-auth-system"
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+GET /api/missions/r-1?status=Active
+GET /api/missions/r-1?assigneeId=agent-dev-1
+GET /api/missions/r-1?directiveId=dir-auth-system
+```
+
+### mission::comment
+
+Add a comment to a mission.
+
+```rust
+iii.trigger("mission::comment", json!({
+    "realmId": "r-1",
+    "missionId": "msn-xyz789",
+    "authorId": "agent-reviewer",
+    "body": "Looks good, but please add unit tests for the JWT validation."
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+POST /api/missions/msn-xyz789/comments
+Content-Type: application/json
+
+{
+  "authorId": "agent-reviewer",
+  "body": "Looks good, but please add unit tests"
+}
+```
+
+### mission::comments
+
+List comments on a mission.
+
+```rust
+let comments = iii.trigger("mission::comments", json!({
+    "realmId": "r-1",
+    "missionId": "msn-xyz789"
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+GET /api/missions/r-1/msn-xyz789/comments
+```
+
+## Storage Scopes
+
+- `realm:{realmId}:missions` - Mission metadata
+- `realm:{realmId}:missions:{missionId}:comments` - Comment threads
+
+## Events
+
+Mission publishes to `mission.lifecycle` topic:
+
+```json
+{
+  "type": "created" | "checked_out" | "transitioned",
+  "missionId": "msn-xyz789",
+  "realmId": "r-1",
+  "agentId": "agent-dev-1",
+  "from": "active",
+  "to": "review"
+}
+```
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Task Queue" icon="list">
+    Agents checkout missions from Queued state, work on them, then move to Review.
+  </Card>
+  <Card title="Kanban Board" icon="table-columns">
+    Map mission statuses to board columns: Backlog, Active, Review, Complete.
+  </Card>
+  <Card title="Subtask Breakdown" icon="diagram-nested">
+    Use parentId to create hierarchical task trees.
+  </Card>
+  <Card title="Billing Tracking" icon="dollar-sign">
+    Tag missions with billingCode to track work by project/customer.
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Link to directives">
+    Always set directiveId to connect tactical work to strategic goals.
+  </Step>
+  
+  <Step title="Use checkout, not manual assignment">
+    Always use mission::checkout to prevent double-assignment race conditions.
+  </Step>
+  
+  <Step title="Add comments for collaboration">
+    Use comment threads for reviews, questions, and status updates.
+  </Step>
+  
+  <Step title="Track time with started_at/completed_at">
+    Calculate cycle time by subtracting started_at from completed_at.
+  </Step>
+  
+  <Step title="Handle blocked missions">
+    Transition to Blocked with reason in comments, then back to Queued when unblocked.
+  </Step>
+</Steps>
+
+## Related
+
+- [Directive](/control-plane/directive) - Link missions to strategic directives
+- [Ledger](/control-plane/ledger) - Track spend per mission via billingCode
+- [Pulse](/control-plane/pulse) - Auto-assign missions based on agent availability

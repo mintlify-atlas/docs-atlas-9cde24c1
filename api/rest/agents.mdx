@@ -1,0 +1,496 @@
+---
+title: Agent Management API
+description: REST API endpoints for creating, listing, messaging, and managing agents
+---
+
+The Agent Management API provides endpoints for full agent lifecycle management, including creation, messaging, session management, and deletion.
+
+## List Agents
+
+Get a list of all agents in the system.
+
+```
+GET /api/agents
+```
+
+### Response
+
+<ResponseField name="agents" type="array">
+  Array of agent objects with their configurations.
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+
+```bash cURL
+curl -X GET http://localhost:3111/api/agents \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    "http://localhost:3111/api/agents",
+    headers={"Authorization": "Bearer YOUR_API_KEY"}
+)
+
+agents = response.json()
+for agent in agents:
+    print(f"{agent['id']}: {agent['name']}")
+```
+
+```typescript TypeScript
+const response = await fetch('http://localhost:3111/api/agents', {
+  headers: {
+    'Authorization': 'Bearer YOUR_API_KEY'
+  }
+});
+
+const agents = await response.json();
+console.log(agents);
+```
+
+</CodeGroup>
+
+## Create Agent
+
+Create a new agent with a custom configuration.
+
+```
+POST /api/agents
+```
+
+### Request
+
+<ParamField path="name" type="string" required>
+  The name of the agent.
+</ParamField>
+
+<ParamField path="description" type="string">
+  A description of the agent's purpose.
+</ParamField>
+
+<ParamField path="model" type="string" default="claude-sonnet-4-6">
+  The LLM model to use for this agent.
+</ParamField>
+
+<ParamField path="systemPrompt" type="string">
+  System prompt that defines the agent's behavior and personality.
+</ParamField>
+
+<ParamField path="tools" type="array">
+  Array of tool IDs that the agent can use. Defaults to the agent's tool profile.
+</ParamField>
+
+<ParamField path="toolProfile" type="string" default="chat">
+  Tool profile preset: `chat`, `code`, `research`, `ops`, `data`, or `full`.
+</ParamField>
+
+<ParamField path="capabilities" type="array">
+  Array of capability strings for RBAC enforcement.
+</ParamField>
+
+<ParamField path="temperature" type="number" default={0.7}>
+  Sampling temperature (0-2).
+</ParamField>
+
+<ParamField path="maxTokens" type="number">
+  Maximum tokens for agent responses.
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">
+  The unique identifier for the created agent.
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST http://localhost:3111/api/agents \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "research-assistant",
+    "description": "Agent specialized in research tasks",
+    "model": "gpt-4o",
+    "systemPrompt": "You are a research assistant that helps find and analyze information.",
+    "toolProfile": "research"
+  }'
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    "http://localhost:3111/api/agents",
+    headers={
+        "Authorization": "Bearer YOUR_API_KEY",
+        "Content-Type": "application/json"
+    },
+    json={
+        "name": "research-assistant",
+        "description": "Agent specialized in research tasks",
+        "model": "gpt-4o",
+        "systemPrompt": "You are a research assistant.",
+        "toolProfile": "research"
+    }
+)
+
+agent = response.json()
+print(f"Created agent: {agent['id']}")
+```
+
+```typescript TypeScript
+const response = await fetch('http://localhost:3111/api/agents', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer YOUR_API_KEY',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    name: 'research-assistant',
+    description: 'Agent specialized in research tasks',
+    model: 'gpt-4o',
+    systemPrompt: 'You are a research assistant.',
+    toolProfile: 'research'
+  })
+});
+
+const agent = await response.json();
+console.log(`Created agent: ${agent.id}`);
+```
+
+</CodeGroup>
+
+## Get Agent
+
+Retrieve details about a specific agent.
+
+```
+GET /api/agents/:id
+```
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the agent.
+</ParamField>
+
+### Response
+
+Returns the agent object with full configuration.
+
+### Example
+
+<CodeGroup>
+
+```bash cURL
+curl -X GET http://localhost:3111/api/agents/agent-123 \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    "http://localhost:3111/api/agents/agent-123",
+    headers={"Authorization": "Bearer YOUR_API_KEY"}
+)
+
+agent = response.json()
+print(f"Agent: {agent['name']} - {agent['description']}")
+```
+
+</CodeGroup>
+
+## Send Message to Agent
+
+Send a message to a specific agent and get a response.
+
+```
+POST /api/agents/:id/message
+```
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the agent.
+</ParamField>
+
+### Request
+
+<ParamField path="message" type="string" required>
+  The message to send to the agent.
+</ParamField>
+
+<ParamField path="sessionId" type="string">
+  Optional session ID for conversation continuity. If not provided, a new session is created.
+</ParamField>
+
+### Response
+
+<ResponseField name="content" type="string">
+  The agent's response message.
+</ResponseField>
+
+<ResponseField name="model" type="string">
+  The model used for the response.
+</ResponseField>
+
+<ResponseField name="usage" type="object">
+  Token usage statistics.
+  
+  <Expandable title="Usage Object">
+    <ResponseField name="input" type="number">
+      Input tokens used.
+    </ResponseField>
+    
+    <ResponseField name="output" type="number">
+      Output tokens generated.
+    </ResponseField>
+    
+    <ResponseField name="total" type="number">
+      Total tokens used.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST http://localhost:3111/api/agents/agent-123/message \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Search for recent AI research papers",
+    "sessionId": "session-456"
+  }'
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    "http://localhost:3111/api/agents/agent-123/message",
+    headers={
+        "Authorization": "Bearer YOUR_API_KEY",
+        "Content-Type": "application/json"
+    },
+    json={
+        "message": "Search for recent AI research papers",
+        "sessionId": "session-456"
+    }
+)
+
+result = response.json()
+print(result['content'])
+print(f"Tokens used: {result['usage']['total']}")
+```
+
+```typescript TypeScript
+const response = await fetch('http://localhost:3111/api/agents/agent-123/message', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer YOUR_API_KEY',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    message: 'Search for recent AI research papers',
+    sessionId: 'session-456'
+  })
+});
+
+const result = await response.json();
+console.log(result.content);
+```
+
+</CodeGroup>
+
+## List Agent Sessions
+
+Get all sessions for a specific agent.
+
+```
+GET /api/agents/:id/sessions
+```
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the agent.
+</ParamField>
+
+### Response
+
+<ResponseField name="sessions" type="array">
+  Array of session objects containing session IDs and metadata.
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+
+```bash cURL
+curl -X GET http://localhost:3111/api/agents/agent-123/sessions \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    "http://localhost:3111/api/agents/agent-123/sessions",
+    headers={"Authorization": "Bearer YOUR_API_KEY"}
+)
+
+sessions = response.json()
+for session in sessions:
+    print(f"Session: {session['id']}")
+```
+
+</CodeGroup>
+
+## Query Agent Memory
+
+Search an agent's memory for relevant information.
+
+```
+POST /api/agents/:id/memory
+```
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the agent.
+</ParamField>
+
+### Request
+
+<ParamField path="query" type="string" required>
+  The search query for memory recall.
+</ParamField>
+
+<ParamField path="limit" type="number" default={10}>
+  Maximum number of results to return (1-200).
+</ParamField>
+
+### Response
+
+<ResponseField name="results" type="array">
+  Array of memory entries matching the query.
+</ResponseField>
+
+### Example
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST http://localhost:3111/api/agents/agent-123/memory \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "research papers",
+    "limit": 5
+  }'
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    "http://localhost:3111/api/agents/agent-123/memory",
+    headers={
+        "Authorization": "Bearer YOUR_API_KEY",
+        "Content-Type": "application/json"
+    },
+    json={
+        "query": "research papers",
+        "limit": 5
+    }
+)
+
+memories = response.json()
+for memory in memories:
+    print(memory['content'])
+```
+
+</CodeGroup>
+
+## Delete Agent
+
+Permanently delete an agent and all associated data.
+
+```
+DELETE /api/agents/:id
+```
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the agent to delete.
+</ParamField>
+
+### Response
+
+Returns 204 No Content on success.
+
+### Example
+
+<CodeGroup>
+
+```bash cURL
+curl -X DELETE http://localhost:3111/api/agents/agent-123 \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```python Python
+import requests
+
+response = requests.delete(
+    "http://localhost:3111/api/agents/agent-123",
+    headers={"Authorization": "Bearer YOUR_API_KEY"}
+)
+
+if response.status_code == 204:
+    print("Agent deleted successfully")
+```
+
+```typescript TypeScript
+const response = await fetch('http://localhost:3111/api/agents/agent-123', {
+  method: 'DELETE',
+  headers: {
+    'Authorization': 'Bearer YOUR_API_KEY'
+  }
+});
+
+if (response.status === 204) {
+  console.log('Agent deleted successfully');
+}
+```
+
+</CodeGroup>
+
+## Tool Profiles
+
+When creating agents, you can specify a tool profile to filter available tools:
+
+- **chat**: Web search, fetch, memory operations (4 tools)
+- **code**: File operations, shell execution, code analysis, patch application
+- **research**: Web operations, browser automation, memory
+- **ops**: Shell execution, system info, process management, disk/network monitoring
+- **data**: JSON, CSV, YAML operations, regex, file operations
+- **full**: All 60+ tools
+
+## Rate Limiting
+
+- List/Get operations: 200 requests/hour
+- Create/Delete operations: 100 requests/hour
+- Message operations: 60 requests/hour
+- Memory queries: 200 requests/hour

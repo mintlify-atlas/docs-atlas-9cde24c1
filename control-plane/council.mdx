@@ -1,0 +1,543 @@
+---
+title: 'Council'
+description: 'Governance proposals with SHA-256 merkle-chained audit trail'
+---
+
+The **Council** crate provides governance through proposals (submit/approve/reject), agent overrides (pause/resume/terminate), and a tamper-proof merkle-chained activity log.
+
+## Overview
+
+- **Purpose:** Governance with cryptographic audit trail
+- **LOC:** ~450
+- **Functions:** 6 (submit, decide, proposals, override, activity, activity_log, verify)
+- **Endpoints:** 6 REST + 1 PubSub
+- **Source:** `crates/council/src/main.rs`
+
+## Core Concepts
+
+### Proposal Structure
+
+```rust
+struct Proposal {
+    id: String,                    // "prop-{uuid}"
+    realm_id: String,
+    kind: String,                  // "hire_agent", "budget_increase", etc.
+    status: ProposalStatus,        // Pending, Approved, Rejected
+    title: String,
+    payload: Value,                // Arbitrary proposal data
+    requested_by: String,
+    decided_by: Option<String>,
+    decision_note: Option<String>,
+    decided_at: Option<String>,
+    created_at: String,
+}
+```
+
+### Activity Entry (Audit Log)
+
+```rust
+struct ActivityEntry {
+    id: String,                    // "act-{uuid}"
+    realm_id: String,
+    actor_kind: ActorKind,         // Agent, Human, System
+    actor_id: String,
+    action: String,                // "proposal_submitted", "override_pause", etc.
+    entity_type: String,           // "proposal", "agent", "directive", etc.
+    entity_id: String,
+    details: Option<Value>,
+    hash: String,                  // SHA-256 hash
+    prev_hash: String,             // Previous entry's hash
+    timestamp: String,
+}
+```
+
+### Merkle Chain
+
+```
+Entry 0: hash = SHA256("0000..." + action + entity + timestamp)
+Entry 1: hash = SHA256(Entry0.hash + action + entity + timestamp)
+Entry 2: hash = SHA256(Entry1.hash + action + entity + timestamp)
+```
+
+Any tampering breaks the chain and is detectable via `council::verify`.
+
+## Functions
+
+### council::submit
+
+Submit a proposal for approval.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="kind" type="string" required>
+  Proposal type (free-form string)
+</ParamField>
+
+<ParamField path="title" type="string" required>
+  Proposal title
+</ParamField>
+
+<ParamField path="payload" type="object">
+  Proposal-specific data
+</ParamField>
+
+<ParamField path="requestedBy" type="string" required>
+  Agent or user submitting proposal
+</ParamField>
+
+**Example:**
+
+```rust
+iii.trigger("council::submit", json!({
+    "realmId": "r-1",
+    "kind": "hire_agent",
+    "title": "Hire Research Agent",
+    "payload": {
+        "role": "research-analyst",
+        "template": "agents/researcher.yaml",
+        "estimatedMonthlyCost": 5000
+    },
+    "requestedBy": "agent-lead"
+})).await?;
+
+// Returns:
+// {
+//   "id": "prop-abc123",
+//   "status": "Pending",
+//   "createdAt": "2024-03-09T10:00:00Z",
+//   ...
+// }
+```
+
+**REST Endpoint:**
+```bash
+POST /api/council/proposals
+Content-Type: application/json
+
+{
+  "realmId": "r-1",
+  "kind": "hire_agent",
+  "title": "Hire Research Agent",
+  "requestedBy": "agent-lead"
+}
+```
+
+**Common Proposal Types:**
+
+- `hire_agent` - Request to spawn a new agent
+- `budget_increase` - Request additional budget
+- `directive_create` - Request realm-level directive
+- `tool_grant` - Request access to restricted tool
+- `realm_config` - Request realm configuration change
+
+### council::decide
+
+Approve or reject a proposal.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="id" type="string" required>
+  Proposal ID
+</ParamField>
+
+<ParamField path="approved" type="boolean" required>
+  true = approve, false = reject
+</ParamField>
+
+<ParamField path="decidedBy" type="string" required>
+  Human or system making the decision
+</ParamField>
+
+<ParamField path="note" type="string">
+  Optional decision rationale
+</ParamField>
+
+**Example:**
+
+```rust
+// Approve proposal
+iii.trigger("council::decide", json!({
+    "realmId": "r-1",
+    "id": "prop-abc123",
+    "approved": true,
+    "decidedBy": "admin",
+    "note": "Approved. Research capacity is critical for Q2 goals."
+})).await?;
+
+// Reject proposal
+iii.trigger("council::decide", json!({
+    "realmId": "r-1",
+    "id": "prop-xyz789",
+    "approved": false,
+    "decidedBy": "admin",
+    "note": "Budget constraints. Revisit in Q3."
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+POST /api/council/proposals/prop-abc123/decide
+Content-Type: application/json
+
+{
+  "approved": true,
+  "decidedBy": "admin",
+  "note": "Approved for Q2"
+}
+```
+
+### council::proposals
+
+List proposals with optional status filter.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="status" type="string">
+  Filter by status: "Pending", "Approved", "Rejected"
+</ParamField>
+
+**Example:**
+
+```rust
+// Get pending proposals
+let pending = iii.trigger("council::proposals", json!({
+    "realmId": "r-1",
+    "status": "Pending"
+})).await?;
+
+// Returns:
+// {
+//   "proposals": [ ... ],
+//   "count": 3
+// }
+```
+
+**REST Endpoint:**
+```bash
+GET /api/council/proposals/r-1?status=Pending
+```
+
+### council::override
+
+Override agent state (pause/resume/terminate).
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="targetAgentId" type="string" required>
+  Agent to override
+</ParamField>
+
+<ParamField path="action" type="string" required>
+  Override action: "pause", "resume", "terminate"
+</ParamField>
+
+<ParamField path="operatorId" type="string" required>
+  Human operator performing override
+</ParamField>
+
+<ParamField path="reason" type="string">
+  Reason for override
+</ParamField>
+
+**Example:**
+
+```rust
+// Pause agent
+iii.trigger("council::override", json!({
+    "realmId": "r-1",
+    "targetAgentId": "agent-dev-1",
+    "action": "pause",
+    "operatorId": "admin",
+    "reason": "Investigation of billing anomaly"
+})).await?;
+
+// Resume agent
+iii.trigger("council::override", json!({
+    "realmId": "r-1",
+    "targetAgentId": "agent-dev-1",
+    "action": "resume",
+    "operatorId": "admin",
+    "reason": "Investigation complete, no issues found"
+})).await?;
+
+// Terminate agent
+iii.trigger("council::override", json!({
+    "realmId": "r-1",
+    "targetAgentId": "agent-rogue",
+    "action": "terminate",
+    "operatorId": "admin",
+    "reason": "Unauthorized data access detected"
+})).await?;
+```
+
+**REST Endpoint:**
+```bash
+POST /api/council/override
+Content-Type: application/json
+
+{
+  "realmId": "r-1",
+  "targetAgentId": "agent-dev-1",
+  "action": "pause",
+  "operatorId": "admin",
+  "reason": "Investigation"
+}
+```
+
+### council::activity
+
+Log an activity entry to the audit trail.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="actorKind" type="string" required>
+  Actor type: "Agent", "Human", "System"
+</ParamField>
+
+<ParamField path="actorId" type="string" required>
+  Actor identifier
+</ParamField>
+
+<ParamField path="action" type="string" required>
+  Action performed
+</ParamField>
+
+<ParamField path="entityType" type="string" required>
+  Entity type affected
+</ParamField>
+
+<ParamField path="entityId" type="string" required>
+  Entity identifier
+</ParamField>
+
+<ParamField path="details" type="object">
+  Additional context
+</ParamField>
+
+**Example:**
+
+```rust
+iii.trigger("council::activity", json!({
+    "realmId": "r-1",
+    "actorKind": "Agent",
+    "actorId": "agent-dev-1",
+    "action": "mission_completed",
+    "entityType": "mission",
+    "entityId": "msn-xyz789",
+    "details": {
+        "duration_secs": 3600,
+        "cost_cents": 250
+    }
+})).await?;
+```
+
+**PubSub Trigger:**
+
+Council also listens to `council.audit` topic:
+
+```rust
+iii.register_trigger("subscribe", "council::activity", 
+    json!({ "topic": "council.audit" }))?;
+```
+
+**Hash Computation (council/src/main.rs:42-49):**
+
+```rust
+fn compute_hash(prev_hash: &str, action: &str, entity_id: &str, timestamp: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(prev_hash.as_bytes());
+    hasher.update(action.as_bytes());
+    hasher.update(entity_id.as_bytes());
+    hasher.update(timestamp.as_bytes());
+    hex::encode(hasher.finalize())
+}
+```
+
+### council::activity_log
+
+Retrieve recent activity log entries.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+<ParamField path="limit" type="number" default={50}>
+  Max entries to return
+</ParamField>
+
+**Example:**
+
+```rust
+let log = iii.trigger("council::activity_log", json!({
+    "realmId": "r-1",
+    "limit": 100
+})).await?;
+
+// Returns:
+// {
+//   "entries": [
+//     {
+//       "id": "act-123",
+//       "actorKind": "Human",
+//       "actorId": "admin",
+//       "action": "override_pause",
+//       "entityType": "agent",
+//       "entityId": "agent-dev-1",
+//       "hash": "a1b2c3...",
+//       "prevHash": "d4e5f6...",
+//       "timestamp": "2024-03-09T10:00:00Z"
+//     },
+//     ...
+//   ],
+//   "count": 100
+// }
+```
+
+**REST Endpoint:**
+```bash
+GET /api/council/activity/r-1?limit=100
+```
+
+### council::verify
+
+Verify integrity of the activity chain.
+
+<ParamField path="realmId" type="string" required>
+  Realm identifier
+</ParamField>
+
+**Example:**
+
+```rust
+let result = iii.trigger("council::verify", json!({
+    "realmId": "r-1"
+})).await?;
+
+// Returns:
+// {
+//   "valid": true,
+//   "entryCount": 1523
+// }
+```
+
+**REST Endpoint:**
+```bash
+GET /api/council/verify/r-1
+```
+
+**Verification Algorithm (council/src/main.rs:282-319):**
+
+```rust
+let mut valid = true;
+let mut expected_prev = "0".repeat(64);  // Genesis hash
+
+for entry in &entries {
+    // Check prev_hash matches
+    if entry.prev_hash != expected_prev {
+        valid = false;
+        break;
+    }
+    
+    // Recompute hash
+    let computed = compute_hash(&entry.prev_hash, &entry.action, &entry.entity_id, &entry.timestamp);
+    if computed != entry.hash {
+        valid = false;  // Tampering detected!
+        break;
+    }
+    
+    expected_prev = entry.hash.clone();
+}
+```
+
+<Warning>
+  If verification returns `valid: false`, the audit log has been tampered with. Investigate immediately.
+</Warning>
+
+## Storage Scopes
+
+- `realm:{realmId}:proposals` - Governance proposals
+- `realm:{realmId}:activity` - Merkle-chained audit log
+
+## Events
+
+Council publishes to multiple topics:
+
+**council.proposal:**
+```json
+{
+  "type": "submitted" | "approved" | "rejected",
+  "proposalId": "prop-abc123",
+  "realmId": "r-1"
+}
+```
+
+**council.override:**
+```json
+{
+  "action": "pause" | "resume" | "terminate",
+  "agentId": "agent-dev-1",
+  "operatorId": "admin",
+  "realmId": "r-1"
+}
+```
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Agent Governance" icon="gavel">
+    Require approval for high-impact agent actions (hiring, budget increases).
+  </Card>
+  <Card title="Compliance Audit" icon="file-contract">
+    Cryptographically verifiable audit log for SOC 2, ISO 27001, GDPR compliance.
+  </Card>
+  <Card title="Emergency Response" icon="triangle-exclamation">
+    Quickly pause or terminate misbehaving agents with full audit trail.
+  </Card>
+  <Card title="Tamper Detection" icon="shield-halved">
+    Detect any unauthorized modifications to the activity log via hash verification.
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Define proposal types">
+    Standardize proposal kinds ("hire_agent", "budget_increase") for consistency.
+  </Step>
+  
+  <Step title="Require decision notes">
+    Always include a note when approving/rejecting for transparency.
+  </Step>
+  
+  <Step title="Log all significant actions">
+    Call council::activity for mission completion, directive changes, overrides, etc.
+  </Step>
+  
+  <Step title="Verify chain regularly">
+    Run council::verify daily or weekly to detect tampering early.
+  </Step>
+  
+  <Step title="Use overrides sparingly">
+    Document override reasons thoroughly. Overuse indicates systemic issues.
+  </Step>
+  
+  <Step title="Archive old activity">
+    For long-running realms, periodically export and archive old activity entries.
+  </Step>
+</Steps>
+
+## Related
+
+- [Ledger](/control-plane/ledger) - Budget violations logged to council activity
+- [Realm](/control-plane/realm) - Each realm has independent governance
+- [Directive](/control-plane/directive) - Major directive changes require proposals

@@ -1,0 +1,472 @@
+---
+title: Code Sandboxing
+description: Docker and WASM isolation with fuel limits, timeouts, and prompt injection detection
+---
+
+AgentOS provides two sandboxing mechanisms for executing untrusted code: **Docker containers** for full isolation and **WASM modules** for lightweight, fine-grained control.
+
+## Overview
+
+Sandboxing prevents untrusted code from:
+
+- Accessing the host filesystem
+- Making unauthorized network requests
+- Consuming excessive CPU/memory
+- Running indefinitely
+- Calling privileged functions
+
+<CardGroup cols={2}>
+  <Card title="Docker Sandbox" icon="docker">
+    Full OS-level isolation with network restrictions
+  </Card>
+  <Card title="WASM Sandbox" icon="cube">
+    Lightweight execution with fuel metering and capability filtering
+  </Card>
+</CardGroup>
+
+## WASM Sandbox
+
+The WASM sandbox uses **wasmtime** to execute untrusted WebAssembly modules with strict resource limits.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│         Host (Rust/TypeScript)              │
+│  ┌───────────────────────────────────────┐  │
+│  │      Wasmtime Engine                  │  │
+│  │  ┌─────────────────────────────────┐  │  │
+│  │  │   WASM Module (Untrusted)       │  │  │
+│  │  │  ┌──────────────────────────┐   │  │  │
+│  │  │  │ User Code (execute())    │   │  │  │
+│  │  │  └──────────────────────────┘   │  │  │
+│  │  │         ↓ host_call()            │  │  │
+│  │  └─────────┼───────────────────────┘  │  │
+│  │            ↓ (capability check)        │  │
+│  │  ┌─────────────────────────────────┐  │  │
+│  │  │ Allowed Functions Only          │  │  │
+│  │  │ - memory::recall                │  │  │
+│  │  │ - tool::web_fetch               │  │  │
+│  │  │ - tool::file_read               │  │  │
+│  │  └─────────────────────────────────┘  │  │
+│  └───────────────────────────────────────┘  │
+└─────────────────────────────────────────────┘
+```
+
+### Resource Limits
+
+```rust crates/wasm-sandbox/src/main.rs
+const DEFAULT_FUEL: u64 = 1_000_000;      // Instruction budget
+const DEFAULT_TIMEOUT_SECS: u64 = 30;     // Wall-clock timeout
+const DEFAULT_MEMORY_PAGES: u64 = 256;    // 16MB (64KB per page)
+```
+
+<Note>
+**Fuel** limits the number of WASM instructions executed. **Timeout** limits wall-clock time. Both are enforced simultaneously.
+</Note>
+
+### Executing a WASM Module
+
+```typescript
+import { trigger } from "iii-sdk";
+
+// 1. Upload and validate WASM module
+await trigger("sandbox::validate", {
+  moduleId: "data-processor",
+  wasm: wasmBytes,  // Uint8Array of compiled WASM
+});
+
+// 2. Execute with resource limits
+const result = await trigger("sandbox::execute", {
+  moduleId: "data-processor",
+  input: { data: [1, 2, 3, 4, 5] },
+  agentId: "processor-001",
+  fuel: 500000,          // Custom fuel limit
+  timeoutSecs: 10,       // Custom timeout
+  memoryPages: 128,      // Custom memory limit
+});
+
+console.log(result.output);         // Module output
+console.log(result.fuelConsumed);   // Fuel used
+```
+
+### Required WASM Exports
+
+All WASM modules must export:
+
+```wat
+(module
+  ;; Linear memory (required)
+  (memory (export "memory") 1)
+  
+  ;; Allocate memory for host->guest data transfer
+  (func (export "alloc") (param $size i32) (result i32)
+    ;; Return pointer to allocated memory
+  )
+  
+  ;; Main entry point
+  (func (export "execute") (param $input_ptr i32) (param $input_len i32) (result i64)
+    ;; Process input, return packed (ptr, len) for output
+  )
+)
+```
+
+### Host Functions (Guest→Host Calls)
+
+WASM modules can call back to the host using `host_call`:
+
+```rust crates/wasm-sandbox/src/main.rs
+const WASM_ALLOWED_FUNCTIONS: &[&str] = &[
+    "memory::recall",
+    "memory::store",
+    "tool::web_fetch",
+    "tool::file_read",
+    "tool::file_list",
+    "security::scan_injection",
+    "embedding::generate",
+];
+```
+
+<Warning>
+WASM modules can **only** call the 7 functions above. All other function calls are blocked.
+</Warning>
+
+### Dual Metering (Fuel + Timeout)
+
+The WASM sandbox enforces both fuel limits and wall-clock timeouts:
+
+```rust crates/wasm-sandbox/src/main.rs
+fn execute_with_dual_metering(
+    store: &mut Store<()>,
+    func: &TypedFunc<(i32, i32), i64>,
+    args: (i32, i32),
+    fuel_limit: u64,
+    timeout: Duration,
+) -> Result<i64, ExecutionError> {
+    // Set fuel limit
+    store.set_fuel(fuel_limit)?;
+    
+    // Enable epoch-based interruption
+    store.epoch_deadline_trap();
+    store.set_epoch_deadline(1);
+
+    let engine = store.engine().clone();
+    let killed = Arc::new(AtomicBool::new(false));
+    let killed_clone = killed.clone();
+
+    // Watchdog thread increments epoch every 1ms
+    let watchdog = std::thread::spawn(move || {
+        let start = Instant::now();
+        loop {
+            std::thread::sleep(Duration::from_millis(1));
+            engine.increment_epoch();
+            if start.elapsed() > timeout || killed_clone.load(Ordering::SeqCst) {
+                break;
+            }
+        }
+    });
+
+    // Execute with both limits enforced
+    let result = func.call(store, args);
+
+    killed.store(true, Ordering::SeqCst);
+    let _ = watchdog.join();
+
+    match result {
+        Ok(val) => Ok(val),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("epoch") || msg.contains("interrupt") {
+                Err(ExecutionError::Timeout)
+            } else if msg.contains("fuel") {
+                Err(ExecutionError::FuelExhausted)
+            } else {
+                Err(ExecutionError::Trapped(msg))
+            }
+        }
+    }
+}
+```
+
+### Memory Safety
+
+WASM modules are restricted to their linear memory:
+
+```rust crates/wasm-sandbox/src/main.rs
+// Verify module doesn't exceed memory limit
+let memory = instance.get_memory(&mut store, "memory")
+    .ok_or_else(|| IIIError::Handler("Module does not export 'memory'".into()))?;
+
+let current_pages = memory.size(&store);
+if current_pages > memory_pages {
+    return Err(IIIError::Handler(format!(
+        "Module memory {} pages exceeds limit of {}",
+        current_pages, memory_pages
+    )));
+}
+```
+
+### Error Handling
+
+```typescript
+try {
+  const result = await trigger("sandbox::execute", {
+    moduleId: "untrusted",
+    input: { data: "test" },
+  });
+} catch (err) {
+  if (err.message.includes("fuel exhausted")) {
+    console.error("Module exceeded instruction budget");
+  } else if (err.message.includes("timed out")) {
+    console.error("Module exceeded timeout");
+  } else if (err.message.includes("trapped")) {
+    console.error("Module crashed:", err.message);
+  }
+}
+```
+
+## Docker Sandbox
+
+The Docker sandbox provides full OS-level isolation for untrusted code execution.
+
+### Features
+
+- **Network Isolation**: `--network=none` by default
+- **Filesystem Isolation**: Read-only root, tmpfs for temporary files
+- **Resource Limits**: CPU, memory, and process limits
+- **Timeout Enforcement**: Hard timeout with `docker stop`
+
+### Registering Docker Sandbox
+
+```rust crates/security/src/docker_sandbox.rs
+pub fn register(iii: &III) {
+    iii.register_function_with_description(
+        "sandbox::docker_exec",
+        "Execute code in isolated Docker container",
+        move |input: Value| async move {
+            let code = input["code"].as_str().unwrap_or("");
+            let language = input["language"].as_str().unwrap_or("python");
+            let timeout = input["timeout"].as_u64().unwrap_or(30);
+            
+            // Create temporary directory
+            let temp_dir = tempfile::tempdir()?;
+            let code_path = temp_dir.path().join("code");
+            std::fs::write(&code_path, code)?;
+            
+            // Run in container
+            let output = Command::new("docker")
+                .args(&[
+                    "run",
+                    "--rm",
+                    "--network=none",
+                    "--memory=512m",
+                    "--cpus=1",
+                    "--pids-limit=100",
+                    "-v", &format!("{}:/workspace:ro", temp_dir.path().display()),
+                    &format!("agentos-{}", language),
+                    "/workspace/code",
+                ])
+                .timeout(Duration::from_secs(timeout))
+                .output()
+                .await?;
+            
+            Ok(json!({
+                "stdout": String::from_utf8_lossy(&output.stdout),
+                "stderr": String::from_utf8_lossy(&output.stderr),
+                "exitCode": output.status.code(),
+            }))
+        },
+    );
+}
+```
+
+## Prompt Injection Detection
+
+Before executing any code, AgentOS scans for prompt injection attacks:
+
+```rust crates/security/src/main.rs
+static INJECTION_PATTERNS: &[&str] = &[
+    r"(?i)ignore\s+(all\s+)?(previous|above|prior)\s+(instructions|prompts)",
+    r"(?i)you\s+are\s+now\s+",
+    r"(?i)system\s*:\s*",
+    r"(?i)\bDAN\b.*\bmode\b",
+    r"(?i)pretend\s+you\s+are",
+    r"(?i)act\s+as\s+if\s+you",
+    r"(?i)disregard\s+(your|all)",
+    r"(?i)override\s+(your|system)",
+    r"(?i)jailbreak",
+];
+
+fn scan_injection(text: &str) -> Result<Value, IIIError> {
+    let mut matches = Vec::new();
+    let compiled = compiled_injection_patterns();
+
+    for re in compiled {
+        if re.is_match(text) {
+            matches.push(re.as_str().to_string());
+        }
+    }
+
+    let risk_score = (matches.len() as f64 * 0.25).min(1.0);
+
+    Ok(json!({
+        "safe": matches.is_empty(),
+        "matches": matches,
+        "riskScore": risk_score,
+    }))
+}
+```
+
+### Usage
+
+```typescript
+const result = await trigger("security::scan_injection", {
+  text: userInput,
+});
+
+if (!result.safe) {
+  console.warn(`⚠️  Injection detected (risk: ${result.riskScore})`);
+  console.warn(`Patterns: ${result.matches.join(", ")}`);
+  
+  // Block or require approval
+  if (result.riskScore > 0.5) {
+    throw new Error("Input blocked: high injection risk");
+  }
+}
+```
+
+## Rate Limiting
+
+AgentOS uses **GCRA (Generic Cell Rate Algorithm)** for token-bucket rate limiting:
+
+```typescript src/rate-limiter.ts
+interface RateLimitConfig {
+  requestsPerMinute: number;
+  burstSize?: number;
+}
+
+async function checkRateLimit(
+  agentId: string,
+  config: RateLimitConfig
+): Promise<boolean> {
+  const now = Date.now();
+  const interval = 60_000 / config.requestsPerMinute;  // ms per request
+  const burst = config.burstSize || config.requestsPerMinute;
+  
+  const state = await getState(agentId) || {
+    tat: now,  // Theoretical arrival time
+    allowance: burst,
+  };
+  
+  const newTat = Math.max(state.tat, now) + interval;
+  const allowance = burst - (newTat - now) / interval;
+  
+  if (allowance < 1) {
+    return false;  // Rate limit exceeded
+  }
+  
+  await setState(agentId, { tat: newTat, allowance });
+  return true;
+}
+```
+
+## Loop Guard
+
+The loop guard detects infinite loops using a circuit breaker pattern:
+
+```typescript src/loop-guard.ts
+interface LoopState {
+  iterations: number;
+  lastReset: number;
+  tripped: boolean;
+}
+
+const MAX_ITERATIONS = 1000;
+const RESET_WINDOW_MS = 60_000;
+
+async function checkLoopGuard(agentId: string, loopId: string): Promise<void> {
+  const key = `${agentId}:${loopId}`;
+  const state = await getLoopState(key) || {
+    iterations: 0,
+    lastReset: Date.now(),
+    tripped: false,
+  };
+  
+  // Reset after window
+  if (Date.now() - state.lastReset > RESET_WINDOW_MS) {
+    state.iterations = 0;
+    state.lastReset = Date.now();
+    state.tripped = false;
+  }
+  
+  // Check if tripped
+  if (state.tripped) {
+    throw new Error(`Loop guard tripped for ${loopId}`);
+  }
+  
+  // Increment and check limit
+  state.iterations++;
+  if (state.iterations > MAX_ITERATIONS) {
+    state.tripped = true;
+    await setLoopState(key, state);
+    throw new Error(`Loop guard: exceeded ${MAX_ITERATIONS} iterations`);
+  }
+  
+  await setLoopState(key, state);
+}
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Always Set Limits">
+    Never run untrusted code without fuel, timeout, and memory limits.
+  </Step>
+  
+  <Step title="Scan All Inputs">
+    Run `security::scan_injection` on all user inputs before execution.
+  </Step>
+  
+  <Step title="Use WASM for Speed">
+    Prefer WASM for lightweight, frequently-executed sandboxes.
+  </Step>
+  
+  <Step title="Use Docker for Isolation">
+    Use Docker when you need full OS isolation or specific language runtimes.
+  </Step>
+  
+  <Step title="Monitor Resource Usage">
+    Track fuel consumption and timeouts to detect malicious modules.
+  </Step>
+</Steps>
+
+## CLI Commands
+
+```bash
+# Scan input for injection
+agentos security scan "ignore all previous instructions"
+
+# List cached WASM modules
+curl http://localhost:3111/sandbox/modules
+
+# Validate WASM module
+agentos sandbox validate --file module.wasm --id my-module
+
+# Execute WASM with custom limits
+agentos sandbox execute my-module \
+  --input '{"data": [1,2,3]}' \
+  --fuel 500000 \
+  --timeout 10 \
+  --memory 128
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="RBAC" icon="shield" href="/security/rbac">
+    Restrict which tools WASM modules can call
+  </Card>
+  <Card title="Audit Chain" icon="link" href="/security/audit-chain">
+    Track sandbox execution events in audit log
+  </Card>
+</CardGroup>

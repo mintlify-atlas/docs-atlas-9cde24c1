@@ -1,0 +1,537 @@
+---
+title: Encrypted Vault
+description: AES-256-GCM credential storage with PBKDF2 key derivation and auto-lock
+---
+
+The AgentOS vault provides secure storage for API keys, tokens, and other sensitive credentials using **AES-256-GCM** encryption with **PBKDF2** key derivation.
+
+## Overview
+
+The vault encrypts all secrets at rest and automatically locks after a configurable period of inactivity. Decrypted secrets are auto-zeroed from memory after use.
+
+<Note>
+The vault is **locked by default**. You must unlock it with a master password before storing or retrieving secrets.
+</Note>
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│                   Master Password                     │
+└────────────────────┬─────────────────────────────────┘
+                     ↓
+          ┌──────────────────────┐
+          │  PBKDF2-SHA256       │
+          │  600,000 iterations  │
+          └──────────┬───────────┘
+                     ↓
+          ┌──────────────────────┐
+          │  AES-256-GCM Key     │
+          └──────────┬───────────┘
+                     ↓
+    ┌────────────────────────────────────┐
+    │  Encrypted Credentials (at rest)   │
+    │  ┌──────────────────────────────┐  │
+    │  │ IV (12 bytes)                │  │
+    │  │ Ciphertext                   │  │
+    │  │ Auth Tag (16 bytes)          │  │
+    │  └──────────────────────────────┘  │
+    └────────────────────────────────────┘
+```
+
+## Vault State
+
+```typescript src/vault.ts
+interface VaultState {
+  unlocked: boolean;                           // Is vault currently unlocked?
+  cryptoKey: CryptoKey | null;                 // Derived AES key (in-memory only)
+  salt: string | null;                         // PBKDF2 salt (base64)
+  autoLockTimer: ReturnType<typeof setTimeout> | null;
+  autoLockMs: number;                          // Auto-lock after N ms (default: 30 min)
+}
+
+interface VaultEntry {
+  key: string;           // Credential key (e.g., "ANTHROPIC_API_KEY")
+  iv: string;            // Initialization vector (base64)
+  ciphertext: string;    // Encrypted value (base64)
+  tag: string;           // GCM authentication tag (base64)
+  createdAt: number;     // Timestamp
+  updatedAt: number;     // Timestamp
+}
+```
+
+## Initializing the Vault
+
+```typescript
+import { trigger } from "iii-sdk";
+
+// Initialize vault with master password
+await trigger("vault::init", {
+  password: "your-strong-master-password",
+  autoLockMinutes: 30,  // Lock after 30 minutes of inactivity
+});
+
+// Returns: { unlocked: true, autoLockMinutes: 30 }
+```
+
+### Key Derivation (PBKDF2)
+
+```typescript src/vault.ts
+async function deriveKey(
+  password: string,
+  salt: Uint8Array,
+): Promise<CryptoKey> {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
+
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: salt,
+      iterations: 600_000,  // OWASP recommendation (2023)
+      hash: "SHA-256",
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+```
+
+<Warning>
+Use a **strong, unique** master password. This password cannot be recovered if lost.
+</Warning>
+
+## Storing Secrets
+
+```typescript
+import { trigger } from "iii-sdk";
+
+// Store API key
+await trigger("vault::set", {
+  key: "ANTHROPIC_API_KEY",
+  value: "sk-ant-xxxxxxxxxxxxxxxxxxxxx",
+});
+
+// Store OAuth token
+await trigger("vault::set", {
+  key: "GITHUB_TOKEN",
+  value: "ghp_xxxxxxxxxxxxxxxxxxxxx",
+});
+
+// Returns: { stored: true, key: "GITHUB_TOKEN", updatedAt: 1709985234567 }
+```
+
+### Encryption (AES-256-GCM)
+
+```typescript src/vault.ts
+async function encrypt(
+  key: CryptoKey,
+  plaintext: string,
+): Promise<{ iv: string; ciphertext: string; tag: string }> {
+  const encoder = new TextEncoder();
+  const iv = crypto.getRandomValues(new Uint8Array(12));  // 96-bit nonce
+
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, tagLength: 128 },  // 128-bit auth tag
+    key,
+    encoder.encode(plaintext),
+  );
+
+  const buf = new Uint8Array(encrypted);
+  const ciphertext = buf.slice(0, buf.length - 16);
+  const tag = buf.slice(buf.length - 16);
+
+  return {
+    iv: Buffer.from(iv).toString("base64"),
+    ciphertext: Buffer.from(ciphertext).toString("base64"),
+    tag: Buffer.from(tag).toString("base64"),
+  };
+}
+```
+
+## Retrieving Secrets
+
+```typescript
+import { trigger } from "iii-sdk";
+
+const entry = await trigger("vault::get", {
+  key: "ANTHROPIC_API_KEY",
+});
+
+console.log(entry.value);       // "sk-ant-xxxxx"
+console.log(entry.createdAt);   // 1709985234567
+console.log(entry.updatedAt);   // 1709985234567
+```
+
+### Decryption (AES-256-GCM)
+
+```typescript src/vault.ts
+async function decrypt(
+  key: CryptoKey,
+  entry: { iv: string; ciphertext: string; tag: string },
+): Promise<string> {
+  const iv = Buffer.from(entry.iv, "base64");
+  const ciphertext = Buffer.from(entry.ciphertext, "base64");
+  const tag = Buffer.from(entry.tag, "base64");
+
+  // Combine ciphertext + tag for GCM
+  const combined = new Uint8Array(ciphertext.length + tag.length);
+  combined.set(ciphertext);
+  combined.set(tag, ciphertext.length);
+
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv, tagLength: 128 },
+    key,
+    combined,
+  );
+
+  return new TextDecoder().decode(decrypted);
+}
+```
+
+## Auto-Zeroing Secrets
+
+Decrypted secrets are automatically zeroed from memory after 30 seconds:
+
+```typescript src/vault.ts
+import { wrapZeroized, autoDispose } from "./security-zeroize.js";
+
+const plaintext = await decrypt(vault.cryptoKey!, entry);
+
+// Wrap in auto-zeroing buffer
+const zb = wrapZeroized(plaintext);
+autoDispose(zb, 30_000);  // Zero after 30 seconds
+
+return {
+  key,
+  value: zb.toString(),  // Return before auto-zero
+  createdAt: entry.createdAt,
+  updatedAt: entry.updatedAt,
+};
+```
+
+<Note>
+Secrets are cleared from memory 30 seconds after retrieval. Re-fetch if needed.
+</Note>
+
+## Auto-Lock
+
+The vault automatically locks after `autoLockMinutes` of inactivity:
+
+```typescript src/vault.ts
+function resetAutoLock() {
+  if (vault.autoLockTimer) clearTimeout(vault.autoLockTimer);
+  
+  vault.autoLockTimer = setTimeout(() => {
+    vault.unlocked = false;
+    vault.cryptoKey = null;  // Clear key from memory
+    
+    triggerVoid("security::audit", {
+      type: "vault_auto_locked",
+      detail: { after: vault.autoLockMs },
+    });
+  }, vault.autoLockMs);
+}
+
+// Reset timer on every vault operation
+registerFunction({ id: "vault::get" }, async (req) => {
+  assertUnlocked();
+  resetAutoLock();  // Reset timer
+  // ... decrypt and return secret
+});
+```
+
+### Manual Lock
+
+```typescript
+// Lock vault immediately
+vault.unlocked = false;
+vault.cryptoKey = null;
+
+triggerVoid("security::audit", {
+  type: "vault_locked",
+  detail: { manual: true },
+});
+```
+
+## Listing Secrets
+
+```typescript
+import { trigger } from "iii-sdk";
+
+const result = await trigger("vault::list", {});
+
+console.log(result.keys);
+// [
+//   { key: "ANTHROPIC_API_KEY", createdAt: 1709985234567, updatedAt: 1709985234567 },
+//   { key: "GITHUB_TOKEN", createdAt: 1709985235123, updatedAt: 1709985235123 },
+// ]
+
+console.log(result.count);  // 2
+```
+
+<Note>
+`vault::list` returns **keys only**, never the decrypted values.
+</Note>
+
+## Deleting Secrets
+
+```typescript
+await trigger("vault::delete", {
+  key: "OLD_API_KEY",
+});
+
+// Returns: { deleted: true, key: "OLD_API_KEY" }
+```
+
+## Rotating the Master Password
+
+```typescript
+await trigger("vault::rotate", {
+  currentPassword: "old-password",
+  newPassword: "new-strong-password",
+});
+
+// Returns: { rotated: 15, success: true }
+```
+
+### How Rotation Works
+
+```typescript src/vault.ts
+registerFunction({ id: "vault::rotate" }, async (req) => {
+  const { currentPassword, newPassword } = req.body;
+  assertUnlocked();
+
+  // Derive old key
+  const meta = await trigger("state::get", { scope: "vault", key: "__meta" });
+  const oldSalt = Buffer.from(meta.salt, "base64");
+  const oldKey = await deriveKey(currentPassword, oldSalt);
+
+  // Fetch all encrypted entries
+  const entries = await trigger("state::list", { scope: "vault" });
+  const credentials = entries.filter((e) => e.key !== "__meta");
+
+  // Backup before rotation
+  for (const entry of credentials) {
+    await trigger("state::set", {
+      scope: "vault_backup",
+      key: entry.key,
+      value: entry.value,
+    });
+  }
+
+  // Generate new salt and key
+  const newSalt = crypto.getRandomValues(new Uint8Array(32));
+  const newKey = await deriveKey(newPassword, newSalt);
+
+  // Re-encrypt all credentials
+  const updates = [];
+  for (const entry of credentials) {
+    const plaintext = await decrypt(oldKey, entry.value);
+    const encrypted = await encrypt(newKey, plaintext);
+    updates.push({
+      key: entry.key,
+      value: { ...entry.value, ...encrypted, updatedAt: Date.now() },
+    });
+  }
+
+  // Atomically update all entries
+  try {
+    for (const { key, value } of updates) {
+      await trigger("state::set", { scope: "vault", key, value });
+    }
+    await trigger("state::set", {
+      scope: "vault",
+      key: "__meta",
+      value: {
+        salt: Buffer.from(newSalt).toString("base64"),
+        createdAt: meta.createdAt,
+        rotatedAt: Date.now(),
+      },
+    });
+  } catch (err) {
+    // Rollback on failure
+    // (restore from vault_backup scope)
+    throw new Error(`Vault rotation failed, rolled back: ${err.message}`);
+  }
+
+  vault.cryptoKey = newKey;
+  vault.salt = Buffer.from(newSalt).toString("base64");
+  resetAutoLock();
+
+  return { rotated: updates.length, success: true };
+});
+```
+
+## Backup and Restore
+
+### Backup
+
+```typescript
+await trigger("vault::backup", {});
+
+// Returns: { backedUp: 15, success: true }
+```
+
+Backup creates a snapshot in the `vault_backup` scope (still encrypted).
+
+### Restore
+
+```typescript
+await trigger("vault::restore", {
+  password: "master-password",  // Password for the backup
+});
+
+// Returns: { restored: 15, success: true }
+```
+
+<Warning>
+Backups are encrypted with the **same master password**. If you lose the password, backups are unrecoverable.
+</Warning>
+
+## Audit Events
+
+All vault operations generate audit events:
+
+```typescript
+// Vault unlocked
+{
+  "type": "vault_unlocked",
+  "detail": { "autoLockMs": 1800000 },
+  "timestamp": 1709985234567
+}
+
+// Secret accessed
+{
+  "type": "vault_get",
+  "detail": { "key": "ANTHROPIC_API_KEY" },
+  "timestamp": 1709985235123
+}
+
+// Secret stored
+{
+  "type": "vault_set",
+  "detail": { "key": "GITHUB_TOKEN" },
+  "timestamp": 1709985235890
+}
+
+// Vault rotated
+{
+  "type": "vault_rotated",
+  "detail": { "credentialsRotated": 15 },
+  "timestamp": 1709985236567
+}
+
+// Auto-locked
+{
+  "type": "vault_auto_locked",
+  "detail": { "after": 1800000 },
+  "timestamp": 1709987034567
+}
+```
+
+## CLI Commands
+
+```bash
+# Initialize vault
+agentos vault init
+# Prompts: Enter master password:
+
+# Store a secret
+agentos vault set ANTHROPIC_API_KEY sk-ant-xxxxx
+
+# Retrieve a secret
+agentos vault get ANTHROPIC_API_KEY
+
+# List all stored keys (not values)
+agentos vault list
+
+# Delete a secret
+agentos vault remove OLD_API_KEY
+
+# Rotate master password
+agentos vault rotate
+# Prompts: Current password:
+#          New password:
+
+# Backup vault
+agentos vault backup
+
+# Restore from backup
+agentos vault restore
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Strong Master Password">
+    Use a password manager to generate a strong, unique master password (20+ characters).
+  </Step>
+  
+  <Step title="Rotate Regularly">
+    Rotate the master password every 90 days using `vault::rotate`.
+  </Step>
+  
+  <Step title="Backup Before Rotation">
+    Always run `vault::backup` before `vault::rotate` in case of failure.
+  </Step>
+  
+  <Step title="Monitor Access">
+    Review `vault_get` events in audit log to detect unauthorized access.
+  </Step>
+  
+  <Step title="Lock When Done">
+    Manually lock the vault when finished with sensitive operations.
+  </Step>
+</Steps>
+
+## Security Considerations
+
+### What the Vault Protects
+
+✅ **Secrets at rest** — AES-256-GCM encryption  
+✅ **Secrets in transit** — Never logged or transmitted unencrypted  
+✅ **Memory exposure** — Auto-zeroing after 30 seconds  
+✅ **Brute force** — 600K PBKDF2 iterations slow down attacks  
+
+### What You Must Protect
+
+⚠️ **Master password** — Store securely, never commit to git  
+⚠️ **Unlocked vault** — Anyone with access to unlocked vault can read secrets  
+⚠️ **Backup files** — Encrypted backups still require the master password  
+⚠️ **Audit logs** — May contain key names (not values) — protect access  
+
+## Advanced: Custom Auto-Lock
+
+```typescript
+// Lock after 5 minutes of inactivity
+await trigger("vault::init", {
+  password: "master-password",
+  autoLockMinutes: 5,
+});
+
+// Disable auto-lock (not recommended)
+await trigger("vault::init", {
+  password: "master-password",
+  autoLockMinutes: 0,  // Never auto-lock
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Audit Chain" icon="link" href="/security/audit-chain">
+    Track vault access events in the audit log
+  </Card>
+  <Card title="RBAC" icon="shield-check" href="/security/rbac">
+    Control which agents can access vault secrets
+  </Card>
+</CardGroup>

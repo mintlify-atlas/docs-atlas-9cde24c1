@@ -1,0 +1,207 @@
+---
+title: Installation
+description: Install AgentOS and its dependencies on Linux, macOS, or Windows
+---
+
+## Quick Install
+
+The fastest way to install AgentOS is using the installation script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iii-hq/agentos/main/scripts/install.sh | sh
+```
+
+This script automatically:
+- Detects your operating system and architecture
+- Installs **iii-engine** v0.3+ (required dependency)
+- Downloads and installs the **agentos** binary to `~/.local/bin`
+- Configures your PATH
+
+## Requirements
+
+Before installing AgentOS, ensure you have the following dependencies:
+
+<CardGroup cols={2}>
+  <Card title="iii-engine" icon="engine">
+    v0.3 or higher (installed automatically)
+  </Card>
+  <Card title="Rust" icon="rust">
+    1.75 or higher (for development)
+  </Card>
+  <Card title="Node.js" icon="node-js">
+    20 or higher (for development)
+  </Card>
+  <Card title="Python" icon="python">
+    3.11 or higher (optional, for embeddings)
+  </Card>
+</CardGroup>
+
+<Note>
+The quick install script only requires **curl**. Development dependencies (Rust, Node.js, Python) are only needed if you plan to build from source or contribute to the project.
+</Note>
+
+## Installation Options
+
+### Custom Version
+
+Install a specific version of AgentOS:
+
+```bash
+AGENTOS_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/iii-hq/agentos/main/scripts/install.sh | sh
+```
+
+### Custom Install Directory
+
+Change the installation directory (default is `~/.local/bin`):
+
+```bash
+BIN_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/iii-hq/agentos/main/scripts/install.sh | sh
+```
+
+### Combined Options
+
+You can combine multiple options:
+
+```bash
+AGENTOS_VERSION=v0.1.0 BIN_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/iii-hq/agentos/main/scripts/install.sh | sh
+```
+
+## Platform Support
+
+The installation script automatically detects your platform:
+
+| Operating System | Architectures |
+|-----------------|---------------|
+| Linux | x86_64, aarch64, armv7 |
+| macOS (Darwin) | x86_64, aarch64 (Apple Silicon) |
+| Windows | x86_64, aarch64 |
+
+<Warning>
+If you encounter an "Unsupported OS" or "Unsupported architecture" error, you'll need to build from source or check the [releases page](https://github.com/iii-hq/agentos/releases) for available binaries.
+</Warning>
+
+## Development Setup
+
+For development, you'll need to install the full toolchain:
+
+<Steps>
+  <Step title="Install Rust">
+    Install Rust 1.75 or higher:
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    ```
+  </Step>
+
+  <Step title="Install Node.js">
+    Install Node.js 20 or higher using [nvm](https://github.com/nvm-sh/nvm) or your package manager:
+    ```bash
+    nvm install 20
+    nvm use 20
+    ```
+  </Step>
+
+  <Step title="Install Python (Optional)">
+    Install Python 3.11 or higher for the embedding worker:
+    ```bash
+    # macOS
+    brew install python@3.11
+    
+    # Ubuntu/Debian
+    sudo apt install python3.11
+    ```
+  </Step>
+
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/iii-hq/agentos.git
+    cd agentos
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    # Install Node.js dependencies
+    npm install
+    
+    # Install Python dependencies (optional)
+    pip install -r workers/embedding/requirements.txt
+    ```
+  </Step>
+
+  <Step title="Build the project">
+    ```bash
+    # Build Rust crates
+    cargo build --release --workspace
+    ```
+  </Step>
+</Steps>
+
+## Verifying Installation
+
+After installation, verify that AgentOS is correctly installed:
+
+```bash
+agentos --version
+```
+
+You should see output similar to:
+
+```
+agentos 0.1.0
+```
+
+Verify iii-engine is also installed:
+
+```bash
+iii --version
+```
+
+## PATH Configuration
+
+If the installation script couldn't automatically add `~/.local/bin` to your PATH, you'll need to do it manually:
+
+<CodeGroup>
+```bash Bash/Zsh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+```bash Fish
+set -Ux fish_user_paths $HOME/.local/bin $fish_user_paths
+```
+</CodeGroup>
+
+## Troubleshooting
+
+### iii-engine Not Found
+
+If you see "iii-engine not found" errors, install it manually:
+
+```bash
+curl -fsSL https://install.iii.dev/iii/main/install.sh | sh
+```
+
+### Permission Denied
+
+If you get permission errors when installing to `/usr/local/bin`, either:
+
+1. Use `sudo` (not recommended for the quick install script)
+2. Install to a user directory:
+   ```bash
+   BIN_DIR=$HOME/.local/bin curl -fsSL ... | sh
+   ```
+
+### Binary Not Found After Installation
+
+If the binary is installed but not found:
+
+1. Restart your terminal
+2. Verify your PATH includes the installation directory
+3. Manually source your shell configuration:
+   ```bash
+   source ~/.bashrc  # or ~/.zshrc
+   ```
+
+## Next Steps
+
+Once AgentOS is installed, proceed to the [Quickstart](/quickstart) guide to initialize your first project and start chatting with agents.

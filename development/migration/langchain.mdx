@@ -1,0 +1,716 @@
+---
+title: "Migrating from LangChain"
+description: "Step-by-step guide to migrate from LangChain/LangGraph to AgentOS"
+---
+
+## Overview
+
+AgentOS provides automated migration from LangChain Python projects. The migration tool scans your Python files, detects LangChain patterns, and converts them to AgentOS configuration.
+
+<Info>
+  **Detection**: The migration scanner looks for LangChain imports and patterns like `ChatOpenAI`, `LLMChain`, `AgentExecutor`, `Tool`, and more.
+</Info>
+
+## What Gets Migrated
+
+The LangChain migration tool detects and converts:
+
+| LangChain Component | AgentOS Equivalent | Status |
+|---------------------|-------------------|--------|
+| `ChatOpenAI`, `ChatAnthropic` | Agent with model config | ✅ Full |
+| `AgentExecutor`, `create_react_agent` | Agent with ReAct loop | ✅ Full |
+| `Tool`, `StructuredTool` | Integration or custom tool | ✅ Full |
+| `LLMChain`, `SequentialChain` | Workflow | 🖄️ Partial |
+| `ConversationBufferMemory` | Agent memory | ✅ Full |
+| `VectorStoreRetriever` | Memory with embeddings | 🖄️ Partial |
+| `OpenAIEmbeddings` | Embedding worker | ✅ Full |
+
+## Quick Migration
+
+<Steps>
+  <Step title="Scan Your Project">
+    ```bash
+    cd /path/to/langchain-project
+    agentos migrate scan
+    ```
+    
+    Output:
+    ```json
+    {
+      "frameworks": [
+        {
+          "framework": "langchain",
+          "detected": true,
+          "configPath": "./agent.py",
+          "version": "0.1.0",
+          "migratable": true
+        }
+      ]
+    }
+    ```
+  </Step>
+
+  <Step title="Preview Migration">
+    ```bash
+    agentos migrate langchain --dry-run
+    ```
+    
+    Shows what will be created without making changes.
+  </Step>
+
+  <Step title="Execute Migration">
+    ```bash
+    agentos migrate langchain
+    ```
+    
+    Creates:
+    - `agents/*/agent.toml` - Agent configurations
+    - `integrations/*.toml` - Custom tools
+    - `workflows/*.toml` - Chain definitions
+    - `data/migrations/langchain-{timestamp}.json` - Migration report
+  </Step>
+
+  <Step title="Review & Test">
+    ```bash
+    # View migration report
+    agentos migrate report
+    
+    # Test migrated agent
+    agentos agent list | grep langchain
+    agentos chat my_agent_llm_0
+    ```
+  </Step>
+</Steps>
+
+## Migration Examples
+
+### Example 1: Simple LLM Agent
+
+<Tabs>
+  <Tab title="Before (LangChain)">
+    ```python agent.py
+    from langchain.chat_models import ChatOpenAI
+    from langchain.agents import create_react_agent, AgentExecutor
+    from langchain.tools import Tool
+
+    # Initialize LLM
+    llm = ChatOpenAI(
+        model_name="gpt-4",
+        temperature=0.7
+    )
+
+    # Define tools
+    tools = [
+        Tool(
+            name="web_search",
+            func=lambda x: search_web(x),
+            description="Search the web for information"
+        )
+    ]
+
+    # Create agent
+    agent = create_react_agent(llm, tools)
+    executor = AgentExecutor(
+        agent=agent,
+        tools=tools,
+        verbose=True
+    )
+
+    # Run
+    result = executor.invoke({"input": "What's the weather?"})
+    ```
+  </Tab>
+
+  <Tab title="After (AgentOS)">
+    ```toml agents/agent_llm_0/agent.toml
+    [agent]
+    name = "agent_llm_0"
+    description = "Migrated from LangChain (agent.py)"
+    module = "builtin:chat"
+
+    [agent.model]
+    provider = "anthropic"
+    model = "claude-sonnet-4-6"  # Auto-mapped from gpt-4
+    max_tokens = 4096
+
+    [agent.capabilities]
+    tools = ["tool::*"]
+    memory_scopes = ["self.*", "shared.*"]
+    network_hosts = ["*"]
+
+    [agent.resources]
+    max_tokens_per_hour = 500000
+
+    system_prompt = """
+    Migrated llm from agent.py. Review and customize this prompt.
+    """
+
+    tags = ["migrated", "langchain"]
+    ```
+    
+    ```bash
+    # Usage
+    agentos message agent_llm_0 "What's the weather?"
+    ```
+  </Tab>
+</Tabs>
+
+### Example 2: Agent with Custom Tools
+
+<Tabs>
+  <Tab title="Before (LangChain)">
+    ```python tools_agent.py
+    from langchain.chat_models import ChatAnthropic
+    from langchain.agents import initialize_agent
+    from langchain.tools import StructuredTool
+
+    def fetch_data(url: str, max_results: int = 10):
+        """Fetch data from a URL."""
+        return requests.get(url).json()
+
+    def process_data(data: dict):
+        """Process fetched data."""
+        return {"processed": True, "count": len(data)}
+
+    llm = ChatAnthropic(model="claude-3-sonnet")
+
+    tools = [
+        StructuredTool.from_function(
+            func=fetch_data,
+            name="fetch_data",
+            description="Fetch data from a URL"
+        ),
+        StructuredTool.from_function(
+            func=process_data,
+            name="process_data",
+            description="Process fetched data"
+        )
+    ]
+
+    agent = initialize_agent(
+        tools,
+        llm,
+        agent="zero-shot-react-description",
+        verbose=True
+    )
+    ```
+  </Tab>
+
+  <Tab title="After (AgentOS)">
+    Agent config:
+    ```toml agents/tools_agent_llm_0/agent.toml
+    [agent]
+    name = "tools_agent_llm_0"
+    description = "Migrated from LangChain (tools_agent.py)"
+    module = "builtin:chat"
+
+    [agent.model]
+    provider = "anthropic"
+    model = "claude-sonnet-4-6"
+    max_tokens = 4096
+
+    [agent.capabilities]
+    tools = ["tool::*", "fetch_data", "process_data"]
+
+    system_prompt = """
+    Migrated llm from tools_agent.py. Review and customize this prompt.
+    """
+
+    tags = ["migrated", "langchain"]
+    ```
+    
+    Tool integrations:
+    ```toml integrations/fetch_data.toml
+    [integration]
+    id = "fetch_data"
+    name = "fetch_data"
+    description = "Migrated tool from LangChain (tools_agent.py)"
+    category = "migrated"
+    transport = "stdio"
+    command = "python"
+    args = ["-m", "tools_agent"]
+
+    [integration.env]
+
+    [integration.oauth]
+    enabled = false
+    ```
+    
+    ```toml integrations/process_data.toml
+    [integration]
+    id = "process_data"
+    name = "process_data"
+    description = "Migrated tool from LangChain (tools_agent.py)"
+    category = "migrated"
+    transport = "stdio"
+    command = "python"
+    args = ["-m", "tools_agent"]
+
+    [integration.env]
+
+    [integration.oauth]
+    enabled = false
+    ```
+  </Tab>
+</Tabs>
+
+### Example 3: Chain as Workflow
+
+<Tabs>
+  <Tab title="Before (LangChain)">
+    ```python chain.py
+    from langchain.chains import LLMChain, SequentialChain
+    from langchain.prompts import PromptTemplate
+    from langchain.chat_models import ChatOpenAI
+
+    llm = ChatOpenAI(model="gpt-4")
+
+    # Chain 1: Generate outline
+    outline_prompt = PromptTemplate(
+        input_variables=["topic"],
+        template="Create an outline for: {topic}"
+    )
+    outline_chain = LLMChain(llm=llm, prompt=outline_prompt, output_key="outline")
+
+    # Chain 2: Write content
+    content_prompt = PromptTemplate(
+        input_variables=["outline"],
+        template="Write content based on: {outline}"
+    )
+    content_chain = LLMChain(llm=llm, prompt=content_prompt, output_key="content")
+
+    # Sequential chain
+    full_chain = SequentialChain(
+        chains=[outline_chain, content_chain],
+        input_variables=["topic"],
+        output_variables=["outline", "content"]
+    )
+
+    result = full_chain({"topic": "AI agents"})
+    ```
+  </Tab>
+
+  <Tab title="After (AgentOS)">
+    ```toml workflows/chain_chain_0.toml
+    [workflow]
+    id = "chain_chain_0"
+    name = "chain_chain_0"
+    description = "Migrated from LangChain chain (chain.py)"
+
+    [[workflow.steps]]
+    id = "outline"
+    type = "llm"
+    prompt = "Create an outline for: {{input.topic}}"
+    output_key = "outline"
+
+    [[workflow.steps]]
+    id = "content"
+    type = "llm"
+    prompt = "Write content based on: {{steps.outline.output}}"
+    output_key = "content"
+    depends_on = ["outline"]
+
+    [workflow.config]
+    model = "claude-sonnet-4-6"
+    max_tokens = 4096
+    ```
+    
+    ```bash
+    # Usage
+    agentos workflow run chain_chain_0 --input '{"topic": "AI agents"}'
+    ```
+  </Tab>
+</Tabs>
+
+### Example 4: Memory with Retrieval
+
+<Tabs>
+  <Tab title="Before (LangChain)">
+    ```python memory_agent.py
+    from langchain.chat_models import ChatOpenAI
+    from langchain.memory import ConversationBufferMemory
+    from langchain.chains import ConversationChain
+    from langchain.embeddings import OpenAIEmbeddings
+    from langchain.vectorstores import Chroma
+
+    llm = ChatOpenAI(model="gpt-4")
+    memory = ConversationBufferMemory()
+    embeddings = OpenAIEmbeddings()
+
+    vectorstore = Chroma(
+        collection_name="conversations",
+        embedding_function=embeddings
+    )
+
+    conversation = ConversationChain(
+        llm=llm,
+        memory=memory,
+        verbose=True
+    )
+
+    response = conversation.predict(input="Hello, I'm learning about agents")
+    ```
+  </Tab>
+
+  <Tab title="After (AgentOS)">
+    ```toml agents/memory_agent_llm_0/agent.toml
+    [agent]
+    name = "memory_agent_llm_0"
+    description = "Migrated from LangChain (memory_agent.py)"
+    module = "builtin:chat"
+
+    [agent.model]
+    provider = "anthropic"
+    model = "claude-sonnet-4-6"
+    max_tokens = 4096
+
+    [agent.capabilities]
+    tools = ["tool::*"]
+    memory_scopes = ["self.*", "shared.*"]  # Built-in memory with embeddings
+    network_hosts = ["*"]
+
+    system_prompt = """
+    Migrated llm from memory_agent.py. Review and customize this prompt.
+    """
+
+    tags = ["migrated", "langchain", "memory"]
+    ```
+    
+    Memory is automatically handled by AgentOS:
+    - `memory::store` - Store conversation turns
+    - `memory::recall` - Retrieve relevant memories using embeddings
+    - `embedding::generate` - Generate embeddings (SentenceTransformers)
+  </Tab>
+</Tabs>
+
+## Pattern Detection
+
+The migration tool detects these LangChain patterns:
+
+```python
+# LLM initialization
+ChatOpenAI(...)                    → agent with OpenAI model
+ChatAnthropic(...)                 → agent with Anthropic model
+ChatGoogleGenerativeAI(...)        → agent with Google model
+AzureChatOpenAI(...)               → agent with Azure OpenAI
+
+# Agent creation
+create_react_agent(...)            → agent config
+create_openai_tools_agent(...)     → agent config
+AgentExecutor(...)                 → agent config
+initialize_agent(...)              → agent config
+
+# Tools
+Tool(...)                          → integration
+StructuredTool(...)                → integration
+@tool decorator                    → integration
+
+# Chains
+LLMChain(...)                      → workflow step
+SequentialChain(...)               → workflow
+RouterChain(...)                   → workflow with conditional
+ConversationChain(...)             → agent with memory
+RetrievalQA(...)                   → agent with memory recall
+
+# Memory
+ConversationBufferMemory(...)      → agent memory
+ConversationSummaryMemory(...)     → agent memory
+VectorStoreMemory(...)             → agent memory with embeddings
+ChatMessageHistory(...)            → session storage
+
+# Retrievers
+VectorStoreRetriever(...)          → memory recall
+SelfQueryRetriever(...)            → memory search
+
+# Embeddings
+OpenAIEmbeddings(...)              → embedding worker
+HuggingFaceEmbeddings(...)         → embedding worker
+CohereEmbeddings(...)              → embedding worker
+```
+
+## Model Mapping
+
+LangChain models are mapped to AgentOS equivalents:
+
+| LangChain Model | AgentOS Model |
+|-----------------|---------------|
+| `gpt-4`, `gpt-4o`, `gpt-4-turbo` | `claude-sonnet-4-6` |
+| `gpt-4o-mini`, `gpt-3.5-turbo` | `claude-haiku-3.5` |
+| `claude-3-opus-20240229` | `claude-opus-4` |
+| `claude-3-sonnet-20240229` | `claude-sonnet-4-6` |
+| `claude-3-haiku-20240307` | `claude-haiku-3.5` |
+| `gemini-pro`, `gemini-1.5-pro` | `claude-sonnet-4-6` |
+| `llama-3-70b` | `llama-3.3-70b` |
+| `mixtral-8x7b` | `mixtral-8x7b` |
+
+## Tool Mapping
+
+Common LangChain tools are mapped:
+
+```python
+# Web tools
+SerpAPIWrapper           → tool::web_search
+GoogleSearchAPIWrapper   → tool::web_search
+DuckDuckGoSearchRun      → tool::web_search
+BraveSearch              → tool::web_search
+WikipediaQueryRun        → tool::web_fetch
+
+# File tools
+ReadFileTool             → tool::file_read
+WriteFileTool            → tool::file_write
+ListDirectoryTool        → tool::file_list
+
+# Code tools
+PythonREPLTool           → tool::shell_exec
+BashTool                 → tool::shell_exec
+
+# Other
+CalculatorTool           → tool::calculate
+RequestsGetTool          → tool::web_fetch
+```
+
+## Post-Migration Steps
+
+<Steps>
+  <Step title="Install Dependencies">
+    Ensure AgentOS is running:
+    
+    ```bash
+    # Start iii-engine
+    iii --config config.yaml &
+    
+    # Start workers
+    agentos start
+    
+    # Or manually
+    cargo run --release -p agentos-core &
+    npx tsx src/agent-core.ts &
+    npx tsx src/tools.ts &
+    python workers/embedding/main.py &
+    ```
+  </Step>
+
+  <Step title="Review System Prompts">
+    Migrated agents have generic system prompts. Customize them:
+    
+    ```bash
+    # List migrated agents
+    ls agents/ | grep langchain
+    
+    # Edit system prompts
+    for agent in agents/*langchain*/agent.toml; do
+      echo "Reviewing: $agent"
+      vim "$agent"
+    done
+    ```
+  </Step>
+
+  <Step title="Implement Custom Tools">
+    If you have custom LangChain tools, implement them as AgentOS functions:
+    
+    ```typescript src/my-tools.ts
+    import { init } from "iii-sdk";
+    
+    const { registerFunction } = init("ws://localhost:49134", {
+      workerName: "my-tools"
+    });
+    
+    registerFunction(
+      { id: "fetch_data", description: "Fetch data from URL" },
+      async ({ url, max_results }: any) => {
+        // Your implementation
+        const response = await fetch(url);
+        return await response.json();
+      }
+    );
+    ```
+    
+    ```bash
+    # Run the worker
+    npx tsx src/my-tools.ts &
+    ```
+  </Step>
+
+  <Step title="Test Agents">
+    Verify each migrated agent works:
+    
+    ```bash
+    # List agents
+    agentos agent list | grep langchain
+    
+    # Test agent
+    agentos message my_agent_llm_0 "Test message"
+    
+    # Interactive chat
+    agentos chat my_agent_llm_0
+    ```
+  </Step>
+
+  <Step title="Migrate Data">
+    If you have conversation history in LangChain:
+    
+    ```python migrate_history.py
+    import json
+    from langchain.memory import FileChatMessageHistory
+    
+    # Load LangChain history
+    history = FileChatMessageHistory("langchain_history.json")
+    messages = history.messages
+    
+    # Convert to AgentOS format
+    agentos_history = {
+        "id": "migrated-session-1",
+        "agent": "my_agent_llm_0",
+        "history": [
+            {"role": m.type, "content": m.content}
+            for m in messages
+        ],
+        "created": "2025-03-01T00:00:00Z",
+        "migrated": "2025-03-09T15:00:00Z",
+        "source": "langchain"
+    }
+    
+    # Save
+    with open("data/sessions/migrated-session-1.json", "w") as f:
+        json.dump(agentos_history, f, indent=2)
+    ```
+  </Step>
+</Steps>
+
+## Advanced Migration
+
+### Custom Config Path
+
+```bash
+agentos migrate langchain --config-dir /path/to/project
+```
+
+### Skip Specific Patterns
+
+Edit migration output manually:
+
+```bash
+# Dry run first
+agentos migrate langchain --dry-run > migration-plan.json
+
+# Review and edit
+vim migration-plan.json
+
+# Apply manually
+# (Create agents/tools based on edited plan)
+```
+
+### Programmatic Migration
+
+```typescript
+import { init } from "iii-sdk";
+
+const { trigger } = init("ws://localhost:49134", { workerName: "migrator" });
+
+const result = await trigger("migrate::langchain", {
+  dryRun: false,
+  configDir: "/path/to/langchain/project"
+}, 300_000);  // 5 minute timeout
+
+console.log(`Migrated ${result.summary.migrated} items`);
+console.log(`Skipped ${result.summary.skipped} items`);
+console.log(`Errors ${result.summary.errors}`);
+```
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="No LangChain detected">
+    If migration scan doesn't find LangChain:
+    
+    ```bash
+    # Check for LangChain installation
+    pip show langchain
+    
+    # Look for Python files with LangChain imports
+    grep -r "from langchain" .
+    grep -r "import langchain" .
+    
+    # Specify directory explicitly
+    agentos migrate langchain --config-dir /path/to/project
+    ```
+  </Accordion>
+
+  <Accordion title="Custom tools not working">
+    Implement custom tools as AgentOS functions:
+    
+    ```bash
+    # Check migration report for skipped tools
+    agentos migrate report | grep -A 5 "tool"
+    
+    # Implement as AgentOS tool
+    vim src/my-custom-tools.ts
+    npx tsx src/my-custom-tools.ts &
+    
+    # Update agent config to include custom tool
+    vim agents/my-agent/agent.toml
+    # Add to tools: ["my_custom_tool"]
+    ```
+  </Accordion>
+
+  <Accordion title="Chain migration incomplete">
+    LangChain chains may need manual workflow creation:
+    
+    ```bash
+    # Check what was migrated
+    ls workflows/
+    
+    # Create workflow manually if needed
+    vim workflows/my-workflow.toml
+    
+    # Test workflow
+    agentos workflow run my-workflow --input '{"key": "value"}'
+    ```
+  </Accordion>
+
+  <Accordion title="Memory not working">
+    Ensure embedding worker is running:
+    
+    ```bash
+    # Check if embedding worker is running
+    ps aux | grep "python.*embedding"
+    
+    # Start embedding worker
+    python workers/embedding/main.py &
+    
+    # Verify it's registered
+    curl http://localhost:3111/functions | jq '.[] | select(.id | startswith("embedding::"))'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Migration Checklist
+
+- [ ] Run `agentos migrate scan` to detect LangChain
+- [ ] Review dry-run output: `agentos migrate langchain --dry-run`
+- [ ] Execute migration: `agentos migrate langchain`
+- [ ] Review migration report: `agentos migrate report`
+- [ ] Customize system prompts in `agents/*/agent.toml`
+- [ ] Implement custom tools in `src/my-tools.ts`
+- [ ] Configure API keys: `agentos config set-key`
+- [ ] Test each agent: `agentos chat <agent-name>`
+- [ ] Migrate conversation history (if needed)
+- [ ] Update application code to use AgentOS API
+- [ ] Remove LangChain dependencies: `pip uninstall langchain`
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Agents" icon="robot" href="/development/creating-agents">
+    Customize your migrated agents
+  </Card>
+  <Card title="Creating Tools" icon="wrench" href="/development/creating-tools">
+    Build custom tools for your agents
+  </Card>
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Test your migrated setup
+  </Card>
+  <Card title="Migration Overview" icon="arrows-turn-right" href="/development/migration/overview">
+    General migration guide
+  </Card>
+</CardGroup>

@@ -1,0 +1,549 @@
+---
+title: Autonomous Hands
+description: Background workers that execute tasks autonomously on schedules without user interaction
+---
+
+Hands are **autonomous background workers** that run on schedules to perform research, monitoring, data collection, and workflow automation without human intervention.
+
+Unlike interactive agents that respond to messages, hands proactively execute multi-phase workflows on cron schedules and store their results in memory for later retrieval.
+
+## Quick Start
+
+```bash
+# List available hands
+agentos hand list
+
+# Enable a hand
+agentos hand enable researcher
+
+# Configure hand settings
+agentos hand configure researcher --set research_depth=thorough
+
+# View hand metrics
+agentos hand status researcher
+
+# Trigger manual execution
+agentos hand run researcher --input '{"topic": "quantum computing trends 2026"}'
+```
+
+## Available Hands
+
+AgentOS includes **7 specialized hands** for common automation needs:
+
+<CardGroup cols={2}>
+  <Card title="Researcher" icon="microscope">
+    **Deep research automation** that finds, cross-references, and synthesizes information.
+    
+    - **Schedule**: Every 6 hours (`0 */6 * * *`)
+    - **Phases**: 7-phase research workflow
+    - **Output**: Structured reports with citations
+    
+    ```bash
+    agentos hand enable researcher
+    ```
+  </Card>
+
+  <Card title="Browser" icon="window-maximize">
+    **Web automation agent** for form filling, data extraction, and multi-step web workflows.
+    
+    - **Schedule**: Every 2 hours (`0 */2 * * *`)
+    - **Phases**: Navigation, interaction, extraction
+    - **Output**: Extracted data and task completion logs
+    
+    ```bash
+    agentos hand enable browser
+    ```
+  </Card>
+
+  <Card title="Collector" icon="download">
+    **Data gathering worker** that pulls data from APIs, databases, and web sources on schedule.
+    
+    - **Schedule**: Configurable (default: hourly)
+    - **Phases**: Source polling, validation, storage
+    - **Output**: Normalized datasets in memory
+    
+    ```bash
+    agentos hand enable collector
+    ```
+  </Card>
+
+  <Card title="Predictor" icon="chart-line">
+    **Forecasting agent** that analyzes trends and predicts future values.
+    
+    - **Schedule**: Daily at midnight (`0 0 * * *`)
+    - **Phases**: Data collection, model training, prediction
+    - **Output**: Time-series forecasts with confidence intervals
+    
+    ```bash
+    agentos hand enable predictor
+    ```
+  </Card>
+
+  <Card title="Twitter" icon="twitter">
+    **Social media monitor** for mentions, trends, and engagement tracking.
+    
+    - **Schedule**: Every 15 minutes (`*/15 * * * *`)
+    - **Phases**: Scanning, sentiment analysis, response drafting
+    - **Output**: Queued responses and analytics
+    
+    ```bash
+    agentos hand enable twitter
+    ```
+  </Card>
+
+  <Card title="Clip" icon="scissors">
+    **Content extraction worker** that saves articles, videos, and podcasts for later processing.
+    
+    - **Schedule**: Continuous monitoring
+    - **Phases**: Discovery, extraction, summarization
+    - **Output**: Archived content with metadata
+    
+    ```bash
+    agentos hand enable clip
+    ```
+  </Card>
+
+  <Card title="Lead" icon="bullseye">
+    **Sales lead monitor** that tracks prospects and qualifies leads automatically.
+    
+    - **Schedule**: Every 4 hours (`0 */4 * * *`)
+    - **Phases**: Source scanning, qualification, CRM update
+    - **Output**: Qualified lead list with scores
+    
+    ```bash
+    agentos hand enable lead
+    ```
+  </Card>
+</CardGroup>
+
+## Deep Dive: Researcher Hand
+
+The researcher hand executes a **7-phase autonomous research workflow**:
+
+<Steps>
+  <Step title="Topic Decomposition">
+    Breaks the research query into 3-5 sub-questions covering the full scope. Identifies key terms, related concepts, and potential angles.
+  </Step>
+  
+  <Step title="Source Discovery">
+    Searches for high-quality sources across academic papers, news, documentation, and expert blogs. Targets the configured source count (default: 10).
+  </Step>
+  
+  <Step title="Information Extraction">
+    Reads each source and extracts facts, statistics, quotes, and arguments. Notes contradictions and flags unverified claims.
+  </Step>
+  
+  <Step title="Cross-Reference Validation">
+    Compares findings across sources. Identifies consensus views, disputed points, and gaps. Assigns confidence levels.
+  </Step>
+  
+  <Step title="Synthesis">
+    Organizes validated findings into a coherent narrative with introduction, key findings, analysis, and conclusions. Includes citations.
+  </Step>
+  
+  <Step title="Memory Storage">
+    Stores the completed report in memory with tags, source URLs, and metadata. Links to related previous research.
+  </Step>
+  
+  <Step title="Follow-Up Identification">
+    Lists unanswered questions and suggests follow-up topics. If auto_follow_up is enabled, queues the top follow-up for next run.
+  </Step>
+</Steps>
+
+### Configuration
+
+```toml
+[hand]
+id = "researcher"
+name = "Deep Researcher"
+description = "Autonomously researches topics and stores structured reports"
+enabled = true
+schedule = "0 */6 * * *"
+
+[hand.tools]
+allowed = [
+  "tool::web_search",
+  "tool::web_fetch",
+  "tool::file_write",
+  "memory::store",
+  "memory::query"
+]
+
+[[hand.settings]]
+key = "research_depth"
+type = "select"
+default = "thorough"
+options = ["quick", "standard", "thorough", "exhaustive"]
+
+[[hand.settings]]
+key = "source_count"
+type = "number"
+default = "10"
+options = ["5", "10", "20", "50"]
+
+[hand.agent]
+max_iterations = 80
+temperature = 0.3
+```
+
+### Usage Example
+
+```bash
+# Enable researcher hand with custom settings
+agentos hand enable researcher
+agentos hand configure researcher \
+  --set research_depth=exhaustive \
+  --set source_count=20 \
+  --set auto_follow_up=true
+
+# Queue a research topic
+agentos hand run researcher --input '{
+  "topic": "Rust async runtime performance comparison 2026",
+  "tags": ["rust", "performance", "async"]
+}'
+
+# View results
+agentos memory list researcher
+agentos memory get researcher latest_report
+```
+
+## Deep Dive: Browser Hand
+
+The browser hand performs **headless browser automation** for complex multi-step web tasks:
+
+<Steps>
+  <Step title="Task Parsing">
+    Analyzes the browsing task to identify target website, goal actions, and expected outcomes. Plans navigation path and identifies barriers.
+  </Step>
+  
+  <Step title="Navigation">
+    Opens target URL, waits for full page load, takes verification screenshot. Handles redirects, cookie banners, and popups automatically.
+  </Step>
+  
+  <Step title="Page Analysis">
+    Extracts page structure including interactive elements (buttons, forms, links, dropdowns). Maps element selectors for reliable interaction.
+  </Step>
+  
+  <Step title="Interaction Execution">
+    Performs actions (clicking, typing, selecting) in correct sequence. Waits for page transitions and verifies each action before proceeding.
+  </Step>
+  
+  <Step title="Data Extraction">
+    Parses relevant page content into structured format. Handles pagination by detecting and following next-page links.
+  </Step>
+  
+  <Step title="Error Recovery">
+    On failure, takes screenshot, analyzes page state, attempts alternative approach. Retries up to 3 times with increasing wait intervals.
+  </Step>
+  
+  <Step title="Result Storage">
+    Stores extracted data and completion status in memory. Saves screenshots of key states for audit trail. Generates task summary.
+  </Step>
+</Steps>
+
+### Configuration
+
+```toml
+[hand]
+id = "browser"
+name = "Web Browser Agent"
+enabled = true
+schedule = "0 */2 * * *"
+
+[[hand.settings]]
+key = "headless_mode"
+type = "boolean"
+default = "true"
+
+[[hand.settings]]
+key = "page_timeout_ms"
+type = "number"
+default = "30000"
+options = ["10000", "30000", "60000"]
+
+[[hand.settings]]
+key = "max_pages_per_task"
+type = "number"
+default = "20"
+```
+
+### Usage Example
+
+```bash
+# Enable browser automation
+agentos hand enable browser
+
+# Configure for visible browser (debugging)
+agentos hand configure browser --set headless_mode=false
+
+# Queue a scraping task
+agentos hand run browser --input '{
+  "task": "Extract product prices from ecommerce site",
+  "url": "https://example.com/products",
+  "selectors": {
+    "product": ".product-card",
+    "price": ".price",
+    "name": ".product-title"
+  },
+  "pagination": true
+}'
+```
+
+## Deep Dive: Twitter Hand
+
+The Twitter hand monitors social media for **brand mentions, trends, and engagement opportunities**:
+
+<Steps>
+  <Step title="Mention Scanning">
+    Searches Twitter/X for mentions of tracked keywords, handles, and hashtags. Collects tweet text, author info, engagement metrics, and thread context.
+  </Step>
+  
+  <Step title="Sentiment Analysis">
+    Classifies each mention as positive, negative, neutral, or question. Applies sentiment filter. Scores urgency based on author reach and negative intensity.
+  </Step>
+  
+  <Step title="Thread Reconstruction">
+    For conversation tweets, reconstructs full thread to understand context. Identifies original poster, key points, and directed questions.
+  </Step>
+  
+  <Step title="Response Drafting">
+    Drafts replies matching configured tone. Keeps responses concise. For negative mentions, acknowledges concerns first. For questions, provides direct answers with links.
+  </Step>
+  
+  <Step title="Content Opportunity Detection">
+    Identifies trending topics relevant to tracked keywords. Drafts original tweet suggestions with hashtags and optimal posting times.
+  </Step>
+  
+  <Step title="Queue Management">
+    Stores drafted responses with status (pending/approved/posted). In draft mode, holds for review. In auto_reply mode, posts below hourly cap. In notify_only, just stores summaries.
+  </Step>
+  
+  <Step title="Analytics Update">
+    Updates engagement metrics, response rates, sentiment trends, and follower interaction patterns. Generates summary of key conversations and trends.
+  </Step>
+</Steps>
+
+### Configuration
+
+```toml
+[[hand.settings]]
+key = "track_keywords"
+type = "text"
+default = ""
+
+[[hand.settings]]
+key = "response_mode"
+type = "select"
+default = "draft"
+options = ["draft", "auto_reply", "notify_only"]
+
+[[hand.settings]]
+key = "max_responses_per_hour"
+type = "number"
+default = "10"
+
+[[hand.settings]]
+key = "tone"
+type = "select"
+default = "professional"
+options = ["professional", "casual", "witty", "technical"]
+```
+
+## Creating Custom Hands
+
+Create a new hand by defining a TOML configuration:
+
+<CodeGroup>
+```toml hands/my-custom-hand/HAND.toml
+[hand]
+id = "stock-monitor"
+name = "Stock Market Monitor"
+description = "Tracks stock prices and alerts on significant moves"
+enabled = true
+schedule = "*/30 * * * *"  # Every 30 minutes
+
+[hand.tools]
+allowed = [
+  "tool::web_fetch",
+  "tool::http_request",
+  "memory::store",
+  "memory::query"
+]
+
+[[hand.settings]]
+key = "watch_list"
+type = "text"
+default = "AAPL,GOOGL,MSFT"
+
+[[hand.settings]]
+key = "alert_threshold_pct"
+type = "number"
+default = "5"
+options = ["1", "3", "5", "10"]
+
+[hand.agent]
+max_iterations = 40
+temperature = 0.1
+system_prompt = """
+Phase 1 - Price Collection: Fetch current prices for all symbols in watch_list.
+Phase 2 - Historical Comparison: Compare to previous run stored in memory.
+Phase 3 - Alert Detection: Flag any moves exceeding alert_threshold_pct.
+Phase 4 - Analysis: For flagged stocks, analyze news and sentiment.
+Phase 5 - Notification: Send alerts for significant moves with context.
+Phase 6 - Memory Update: Store latest prices and analysis for next run.
+"""
+
+[[hand.dashboard.metrics]]
+label = "Stocks Tracked"
+key = "stocks_count"
+
+[[hand.dashboard.metrics]]
+label = "Alerts Triggered"
+key = "alerts_count"
+```
+
+```bash Install and enable
+agentos hand install ./hands/my-custom-hand
+agentos hand enable stock-monitor
+agentos hand configure stock-monitor --set watch_list="NVDA,AMD,INTC"
+```
+</CodeGroup>
+
+## Hand Management
+
+<Accordion title="List all hands">
+  ```bash
+  agentos hand list
+  agentos hand list --enabled
+  ```
+</Accordion>
+
+<Accordion title="Enable/disable hands">
+  ```bash
+  agentos hand enable researcher
+  agentos hand disable browser
+  ```
+</Accordion>
+
+<Accordion title="View hand status and metrics">
+  ```bash
+  agentos hand status researcher
+  agentos hand metrics researcher --last 24h
+  ```
+</Accordion>
+
+<Accordion title="Manual execution">
+  ```bash
+  # Run immediately with input
+  agentos hand run researcher --input '{"topic": "AI trends"}'
+  
+  # Run with custom settings override
+  agentos hand run researcher \
+    --input '{"topic": "Rust"}' \
+    --override research_depth=quick
+  ```
+</Accordion>
+
+<Accordion title="View execution logs">
+  ```bash
+  agentos hand logs researcher
+  agentos hand logs researcher --last 10
+  agentos hand logs researcher --since "2026-03-01"
+  ```
+</Accordion>
+
+## Dashboard Metrics
+
+Hands expose custom metrics visible in the TUI dashboard:
+
+```toml
+[[hand.dashboard.metrics]]
+label = "Reports Generated"
+key = "reports_count"
+
+[[hand.dashboard.metrics]]
+label = "Sources Analyzed"
+key = "sources_analyzed"
+
+[[hand.dashboard.metrics]]
+label = "Avg Confidence Score"
+key = "avg_confidence"
+```
+
+Access metrics programmatically:
+
+```bash
+agentos hand metrics researcher --format json
+```
+
+## Integration with Workflows
+
+Hands can be invoked as workflow steps:
+
+```yaml
+steps:
+  - name: Background Research
+    functionId: "hand::run"
+    mode: sequential
+    timeoutMs: 300000
+    errorMode: retry
+    maxRetries: 2
+    outputVar: research_output
+    config:
+      handId: researcher
+      input:
+        topic: "{{workflow_input.topic}}"
+        tags: ["automated"]
+```
+
+## Security & Approval Gates
+
+Hands respect the same security model as agents:
+
+- **RBAC**: Tool access controlled via `[hand.tools].allowed`
+- **Approval Tiers**: Destructive actions require async/sync approval
+- **Sandboxing**: Code execution runs in Docker/WASM sandbox
+- **Rate Limiting**: Configurable per-hand rate limits
+- **Audit Trail**: All actions logged to Merkle chain
+
+```toml
+[hand.security]
+approval_tier = "async"  # auto | async | sync
+max_requests_per_hour = 100
+sandbox = "docker"  # docker | wasm | none
+```
+
+## Best Practices
+
+<Card title="Idempotency" icon="repeat">
+  Design hands to be idempotent — running multiple times should not cause duplicate work or data corruption.
+</Card>
+
+<Card title="Error Recovery" icon="rotate-right">
+  Store progress in memory so hands can resume from last checkpoint after failures.
+</Card>
+
+<Card title="Resource Limits" icon="gauge-high">
+  Set `max_iterations` and timeouts to prevent runaway execution and cost overruns.
+</Card>
+
+<Card title="Observability" icon="chart-line">
+  Emit custom metrics for monitoring hand health and effectiveness over time.
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Workflows" icon="diagram-project" href="/templates/workflows">
+    Combine hands with agents in multi-step workflows
+  </Card>
+  <Card title="Memory" icon="database" href="/core-concepts/memory">
+    Store and retrieve hand results using the memory system
+  </Card>
+  <Card title="Scheduling" icon="clock" href="/customize/scheduling">
+    Configure cron schedules and pulse-based triggers
+  </Card>
+  <Card title="Approval System" icon="circle-check" href="/security/approval-gates">
+    Control hand actions with approval gates
+  </Card>
+</CardGroup>

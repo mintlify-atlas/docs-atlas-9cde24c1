@@ -1,0 +1,454 @@
+---
+title: 'Tools API'
+description: 'Tool registration and execution functions for file operations, shell commands, web access, and agent spawning'
+---
+
+## Overview
+
+The Tools module provides core tool implementations for file operations, shell execution, web fetching, web search, and agent-to-agent communication. All tools include automatic metrics collection and security enforcement.
+
+## File Operations
+
+### tool::file_read
+
+Read file contents with path containment security checks.
+
+<ParamField path="path" type="string" required>
+  File path relative to WORKSPACE_ROOT
+</ParamField>
+
+<ParamField path="maxBytes" type="number">
+  Optional maximum bytes to read (for limiting large files)
+</ParamField>
+
+<ResponseField name="result" type="object">
+  <ResponseField name="content" type="string">
+    The file contents (limited by maxBytes if specified)
+  </ResponseField>
+  
+  <ResponseField name="path" type="string">
+    The resolved absolute path
+  </ResponseField>
+  
+  <ResponseField name="size" type="number">
+    The total file size in bytes
+  </ResponseField>
+</ResponseField>
+
+<CodeGroup>
+```typescript Read File
+const result = await trigger('tool::file_read', {
+  path: 'src/config.ts',
+  maxBytes: 10000
+});
+
+console.log(`Read ${result.content.length} of ${result.size} bytes`);
+```
+</CodeGroup>
+
+**Security**: Automatically enforces path containment via `assertPathContained()` to prevent directory traversal attacks.
+
+---
+
+### tool::file_write
+
+Write content to a file with path containment security.
+
+<ParamField path="path" type="string" required>
+  File path relative to WORKSPACE_ROOT
+</ParamField>
+
+<ParamField path="content" type="string" required>
+  Content to write to the file
+</ParamField>
+
+<ResponseField name="result" type="object">
+  <ResponseField name="written" type="boolean">
+    Confirmation of successful write
+  </ResponseField>
+  
+  <ResponseField name="path" type="string">
+    The resolved absolute path
+  </ResponseField>
+  
+  <ResponseField name="size" type="number">
+    The number of bytes written
+  </ResponseField>
+</ResponseField>
+
+<CodeGroup>
+```typescript Write File
+const result = await trigger('tool::file_write', {
+  path: 'output/result.json',
+  content: JSON.stringify({ status: 'success' }, null, 2)
+});
+
+console.log(`Wrote ${result.size} bytes to ${result.path}`);
+```
+</CodeGroup>
+
+---
+
+### tool::file_list
+
+List directory contents with file metadata.
+
+<ParamField path="path" type="string" required>
+  Directory path relative to WORKSPACE_ROOT
+</ParamField>
+
+<ParamField path="recursive" type="boolean">
+  Whether to recursively list subdirectories (not fully implemented)
+</ParamField>
+
+<ResponseField name="result" type="object">
+  <ResponseField name="path" type="string">
+    The resolved directory path
+  </ResponseField>
+  
+  <ResponseField name="entries" type="array">
+    Array of file/directory entries with:
+    - `name` (string): Entry name
+    - `type` ("file" | "directory"): Entry type
+    - `size` (number): Size in bytes
+    - `modified` (string): ISO timestamp of last modification
+  </ResponseField>
+</ResponseField>
+
+<CodeGroup>
+```typescript List Directory
+const result = await trigger('tool::file_list', {
+  path: 'src'
+});
+
+result.entries.forEach(entry => {
+  console.log(`${entry.type}: ${entry.name} (${entry.size} bytes)`);
+});
+```
+</CodeGroup>
+
+---
+
+### tool::apply_patch
+
+Apply a unified diff patch to a file.
+
+<ParamField path="path" type="string" required>
+  File path to apply the patch to
+</ParamField>
+
+<ParamField path="patch" type="string" required>
+  Unified diff format patch content
+</ParamField>
+
+<ResponseField name="result" type="object">
+  <ResponseField name="patched" type="boolean">
+    Confirmation of successful patch application
+  </ResponseField>
+  
+  <ResponseField name="path" type="string">
+    The resolved file path
+  </ResponseField>
+</ResponseField>
+
+<CodeGroup>
+```typescript Apply Patch
+const patch = `@@ -1,3 +1,3 @@
+-const version = "1.0.0";
++const version = "1.1.0";
+`;
+
+const result = await trigger('tool::apply_patch', {
+  path: 'src/version.ts',
+  patch
+});
+```
+</CodeGroup>
+
+---
+
+## Shell Execution
+
+### tool::shell_exec
+
+Execute commands with sandboxing and allowlist enforcement. No shell interpretation - direct binary execution only.
+
+<ParamField path="argv" type="string[]" required>
+  Command array [binary, ...args] - first element must be in SHELL_COMMAND_ALLOWLIST
+</ParamField>
+
+<ParamField path="cwd" type="string">
+  Working directory relative to WORKSPACE_ROOT
+</ParamField>
+
+<ParamField path="timeout" type="number">
+  Execution timeout in milliseconds (default: 120000)
+</ParamField>
+
+<ResponseField name="result" type="object">
+  <ResponseField name="stdout" type="string">
+    Standard output (limited to 100KB)
+  </ResponseField>
+  
+  <ResponseField name="stderr" type="string">
+    Standard error output (limited to 50KB)
+  </ResponseField>
+  
+  <ResponseField name="exitCode" type="number">
+    Process exit code (0 = success)
+  </ResponseField>
+</ResponseField>
+
+#### Allowed Commands
+
+```typescript
+const SHELL_COMMAND_ALLOWLIST = [
+  'git', 'node', 'npm', 'npx', 'bun', 'deno',
+  'python3', 'python', 'pip',
+  'ls', 'cat', 'grep', 'find', 'echo', 'mkdir', 'touch', 'cp', 'mv',
+  'head', 'tail', 'wc', 'sort', 'uniq', 'diff',
+  'curl', 'wget', 'tar', 'zip', 'unzip', 'jq', 'sed', 'awk',
+  'which', 'env', 'date',
+  'cargo', 'rustc', 'go', 'make', 'cmake'
+];
+```
+
+<CodeGroup>
+```typescript Run Git Command
+const result = await trigger('tool::shell_exec', {
+  argv: ['git', 'status', '--short'],
+  cwd: 'my-project'
+});
+
+if (result.exitCode === 0) {
+  console.log('Git status:', result.stdout);
+} else {
+  console.error('Error:', result.stderr);
+}
+```
+
+```typescript Run NPM Install
+const result = await trigger('tool::shell_exec', {
+  argv: ['npm', 'install'],
+  cwd: 'frontend',
+  timeout: 300000 // 5 minutes
+});
+```
+</CodeGroup>
+
+**Security**:
+- Only allowlisted binaries can be executed
+- No shell interpretation (prevents injection)
+- Environment variables filtered through `TAINT_ENV_ALLOWLIST`
+- Path containment enforced on working directory
+- Output size limits prevent memory exhaustion
+- Execution logged to security audit
+
+---
+
+## Web Access
+
+### tool::web_fetch
+
+SSRF-protected HTTP fetch with automatic HTML-to-text conversion.
+
+<ParamField path="url" type="string" required>
+  URL to fetch (validated against SSRF attacks)
+</ParamField>
+
+<ParamField path="maxSize" type="number">
+  Maximum response size in bytes (default: 500000)
+</ParamField>
+
+<ResponseField name="result" type="object">
+  <ResponseField name="url" type="string">
+    The fetched URL
+  </ResponseField>
+  
+  <ResponseField name="status" type="number">
+    HTTP status code
+  </ResponseField>
+  
+  <ResponseField name="contentType" type="string">
+    Response content type header
+  </ResponseField>
+  
+  <ResponseField name="content" type="string">
+    Response content (HTML converted to text, limited to 100KB)
+  </ResponseField>
+  
+  <ResponseField name="truncated" type="boolean">
+    Whether content was truncated due to size limits
+  </ResponseField>
+</ResponseField>
+
+<CodeGroup>
+```typescript Fetch Web Page
+const result = await trigger('tool::web_fetch', {
+  url: 'https://example.com/docs',
+  maxSize: 100000
+});
+
+if (result.status === 200) {
+  console.log('Content:', result.content.slice(0, 500));
+}
+```
+</CodeGroup>
+
+**Security**: Automatically calls `assertNoSsrf()` to prevent requests to internal IP ranges.
+
+---
+
+### tool::web_search
+
+Multi-provider web search supporting Tavily, Brave, and DuckDuckGo.
+
+<ParamField path="query" type="string" required>
+  Search query string
+</ParamField>
+
+<ParamField path="provider" type="string">
+  Search provider: "tavily", "brave", or fallback to "duckduckgo"
+</ParamField>
+
+<ParamField path="maxResults" type="number">
+  Maximum number of results (default: 5)
+</ParamField>
+
+<ResponseField name="result" type="object">
+  <ResponseField name="results" type="array">
+    Array of search results with `title`, `url`, and `content` fields
+  </ResponseField>
+  
+  <ResponseField name="provider" type="string">
+    The provider that served the results
+  </ResponseField>
+</ResponseField>
+
+<CodeGroup>
+```typescript Web Search
+const result = await trigger('tool::web_search', {
+  query: 'TypeScript async patterns',
+  provider: 'brave',
+  maxResults: 10
+});
+
+result.results.forEach(item => {
+  console.log(`${item.title}: ${item.url}`);
+});
+```
+</CodeGroup>
+
+**Provider Configuration**:
+- **Tavily**: Requires `TAVILY_API_KEY` environment variable
+- **Brave**: Requires `BRAVE_API_KEY` environment variable
+- **DuckDuckGo**: No API key required (default fallback)
+
+---
+
+## Agent Communication
+
+### tool::agent_spawn
+
+Spawn a sub-agent with depth limits and resource quotas.
+
+<ParamField path="template" type="string" required>
+  Template identifier for the sub-agent type
+</ParamField>
+
+<ParamField path="parentId" type="string">
+  Parent agent ID for tracking hierarchy
+</ParamField>
+
+<ParamField path="message" type="string" required>
+  Initial message to send to the spawned agent
+</ParamField>
+
+<ResponseField name="result" type="object">
+  <ResponseField name="agentId" type="string">
+    The newly created agent's ID
+  </ResponseField>
+  
+  <ResponseField name="response" type="string">
+    The agent's response content
+  </ResponseField>
+  
+  <ResponseField name="depth" type="number">
+    Depth level in the agent hierarchy
+  </ResponseField>
+</ResponseField>
+
+**Limits**:
+- **MAX_AGENT_DEPTH**: 5 - Maximum nesting depth
+- **DEFAULT_MAX_SUB_AGENTS**: 20 - Default quota per parent
+
+<CodeGroup>
+```typescript Spawn Sub-Agent
+const result = await trigger('tool::agent_spawn', {
+  template: 'code-analyzer',
+  parentId: 'agent-123',
+  message: 'Analyze the TypeScript files in src/'
+});
+
+console.log(`Spawned agent ${result.agentId} at depth ${result.depth}`);
+console.log('Response:', result.response);
+```
+</CodeGroup>
+
+---
+
+### tool::agent_send
+
+Send a message to another agent with spam prevention.
+
+<ParamField path="agentId" type="string" required>
+  Sending agent's ID
+</ParamField>
+
+<ParamField path="targetAgentId" type="string" required>
+  Receiving agent's ID
+</ParamField>
+
+<ParamField path="message" type="string" required>
+  Message content (max 100KB)
+</ParamField>
+
+<ResponseField name="result" type="object">
+  <ResponseField name="sent" type="boolean">
+    Confirmation of message queuing
+  </ResponseField>
+  
+  <ResponseField name="targetAgentId" type="string">
+    The recipient agent ID
+  </ResponseField>
+</ResponseField>
+
+**Rate Limits**:
+- **MESSAGE_MAX_BYTES**: 100KB - Maximum message size
+- **MESSAGE_QUEUE_MAX**: 1000 - Maximum queue depth per agent
+- **AGENT_PAIR_RATE_LIMIT**: 10 messages per minute between any agent pair
+
+<CodeGroup>
+```typescript Send Message
+const result = await trigger('tool::agent_send', {
+  agentId: 'agent-123',
+  targetAgentId: 'agent-456',
+  message: 'Task completed, ready for next step'
+});
+
+if (result.sent) {
+  console.log('Message queued successfully');
+}
+```
+</CodeGroup>
+
+---
+
+## Metrics Wrapper
+
+All tools automatically use the `withToolMetrics()` wrapper which records:
+
+- `tool_execution_total` - Execution count by status (success/failure)
+- `function_call_duration_ms` - Execution duration histogram
+
+**Location**: `tools.ts:27`

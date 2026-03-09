@@ -1,0 +1,358 @@
+---
+title: "agent-core"
+description: "Core agent lifecycle and execution functions for AgentOS"
+---
+
+The `agent-core` crate provides the central agent execution engine, managing agent lifecycle, tool execution, and conversation orchestration with security and memory integration.
+
+## agent::chat
+
+Process a message through the agent loop with tool execution, security checks, and memory storage.
+
+<ParamField path="agentId" type="string" required>
+  Unique identifier for the agent to process the message
+</ParamField>
+
+<ParamField path="message" type="string" required>
+  User message to process through the agent
+</ParamField>
+
+<ParamField path="sessionId" type="string">
+  Optional session identifier for conversation tracking. Defaults to `default:{agentId}`
+</ParamField>
+
+<ParamField path="systemPrompt" type="string">
+  Optional system prompt override. Falls back to agent config if not provided
+</ParamField>
+
+<ResponseField name="content" type="string">
+  The assistant's response content
+</ResponseField>
+
+<ResponseField name="model" type="object">
+  Model information used for the completion
+</ResponseField>
+
+<ResponseField name="usage" type="object">
+  Token usage statistics (input, output, total)
+</ResponseField>
+
+<ResponseField name="iterations" type="number">
+  Number of tool execution iterations performed (max 50)
+</ResponseField>
+
+<ResponseField name="durationMs" type="number">
+  Total execution time in milliseconds
+</ResponseField>
+
+<CodeGroup>
+
+```rust agent-core/src/main.rs
+use iii_sdk::iii::III;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let iii = III::new("ws://localhost:49134");
+
+    let response = iii.trigger("agent::chat", json!({
+        "agentId": "my-agent",
+        "message": "Hello, can you help me?",
+        "sessionId": "session-123"
+    })).await?;
+
+    println!("Response: {}", response["content"].as_str().unwrap());
+    Ok(())
+}
+```
+
+```typescript TypeScript SDK
+import { III } from '@agentos/iii-sdk';
+
+const iii = new III('ws://localhost:49134');
+
+const response = await iii.trigger('agent::chat', {
+  agentId: 'my-agent',
+  message: 'Hello, can you help me?',
+  sessionId: 'session-123'
+});
+
+console.log('Response:', response.content);
+```
+
+</CodeGroup>
+
+### Security Integration
+
+The agent::chat function automatically performs:
+- **Injection scanning** - Scans user messages for prompt injection patterns (threshold: 0.5 risk score)
+- **Capability checks** - Validates tool access before execution via `security::check_capability`
+- **Token quota enforcement** - Tracks and enforces max_tokens_per_hour limits
+
+### Tool Execution Loop
+
+The agent executes tools in an iterative loop with a maximum of 50 iterations:
+
+1. Route to optimal model via `llm::route`
+2. Generate completion with available tools
+3. If tool calls present:
+   - Check capability for each tool
+   - Execute tool via III trigger
+   - Append results to conversation
+   - Request next completion
+4. Store conversation in memory
+5. Update metering statistics
+
+---
+
+## agent::create
+
+Register a new agent with configuration including model preferences, capabilities, and resource limits.
+
+<ParamField path="id" type="string">
+  Optional agent ID. Auto-generates UUID if not provided
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Display name for the agent
+</ParamField>
+
+<ParamField path="description" type="string">
+  Optional description of the agent's purpose
+</ParamField>
+
+<ParamField path="model" type="object">
+  Model configuration object
+  
+  <ParamField path="provider" type="string">
+    Provider name (e.g., "anthropic", "openai")
+  </ParamField>
+  
+  <ParamField path="model" type="string">
+    Model identifier (e.g., "claude-sonnet-4-20250514")
+  </ParamField>
+  
+  <ParamField path="maxTokens" type="number">
+    Maximum tokens per completion
+  </ParamField>
+</ParamField>
+
+<ParamField path="systemPrompt" type="string">
+  Default system prompt for the agent
+</ParamField>
+
+<ParamField path="capabilities" type="object">
+  Agent capability restrictions
+  
+  <ParamField path="tools" type="array">
+    Array of allowed tool patterns (e.g., `["*"]`, `["file::*", "memory::*"]`)
+  </ParamField>
+  
+  <ParamField path="memoryScopes" type="array">
+    Optional array of allowed memory scope patterns
+  </ParamField>
+  
+  <ParamField path="networkHosts" type="array">
+    Optional array of allowed network hosts
+  </ParamField>
+</ParamField>
+
+<ParamField path="resources" type="object">
+  Resource limits
+  
+  <ParamField path="maxTokensPerHour" type="number">
+    Maximum token usage per hour
+  </ParamField>
+</ParamField>
+
+<ParamField path="tags" type="array">
+  Optional array of string tags for organization
+</ParamField>
+
+<ResponseField name="agentId" type="string">
+  The created or assigned agent ID
+</ResponseField>
+
+<CodeGroup>
+
+```rust Create Agent
+let response = iii.trigger("agent::create", json!({
+    "name": "Customer Support Agent",
+    "description": "Handles customer inquiries and support tickets",
+    "model": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-20250514",
+        "maxTokens": 4096
+    },
+    "systemPrompt": "You are a helpful customer support agent. Be concise and professional.",
+    "capabilities": {
+        "tools": ["memory::*", "state::*"],
+        "memoryScopes": ["customer_data"]
+    },
+    "resources": {
+        "maxTokensPerHour": 100000
+    },
+    "tags": ["support", "prod"]
+})).await?;
+
+let agent_id = response["agentId"].as_str().unwrap();
+```
+
+```typescript TypeScript
+const response = await iii.trigger('agent::create', {
+  name: 'Customer Support Agent',
+  description: 'Handles customer inquiries and support tickets',
+  model: {
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-20250514',
+    maxTokens: 4096
+  },
+  systemPrompt: 'You are a helpful customer support agent. Be concise and professional.',
+  capabilities: {
+    tools: ['memory::*', 'state::*'],
+    memoryScopes: ['customer_data']
+  },
+  resources: {
+    maxTokensPerHour: 100000
+  },
+  tags: ['support', 'prod']
+});
+
+const agentId = response.agentId;
+```
+
+</CodeGroup>
+
+---
+
+## agent::list
+
+List all registered agents in the system.
+
+<ResponseField name="agents" type="array">
+  Array of agent configuration objects with id, name, description, model, capabilities, etc.
+</ResponseField>
+
+```rust List Agents
+let agents = iii.trigger("agent::list", json!({})).await?;
+
+for agent in agents.as_array().unwrap() {
+    println!("Agent: {} - {}", 
+        agent["id"].as_str().unwrap(),
+        agent["name"].as_str().unwrap()
+    );
+}
+```
+
+---
+
+## agent::delete
+
+Remove an agent from the system and publish lifecycle event.
+
+<ParamField path="agentId" type="string" required>
+  ID of the agent to delete
+</ParamField>
+
+<ResponseField name="deleted" type="boolean">
+  Returns true if deletion was successful
+</ResponseField>
+
+```rust Delete Agent
+let result = iii.trigger("agent::delete", json!({
+    "agentId": "agent-123"
+})).await?;
+
+assert_eq!(result["deleted"].as_bool().unwrap(), true);
+```
+
+<Note>
+Deleting an agent publishes an `agent.lifecycle` event with type "deleted".
+</Note>
+
+---
+
+## agent::list_tools
+
+List tools available to a specific agent based on its capability configuration.
+
+<ParamField path="agentId" type="string" required>
+  ID of the agent to query tools for
+</ParamField>
+
+<ResponseField name="tools" type="array">
+  Array of available tool definitions with id, description, and parameters
+</ResponseField>
+
+```rust List Tools
+let tools = iii.trigger("agent::list_tools", json!({
+    "agentId": "my-agent"
+})).await?;
+
+for tool in tools.as_array().unwrap() {
+    println!("Tool: {}", tool["id"].as_str().unwrap());
+}
+```
+
+### Tool Filtering Logic
+
+- If capabilities include `"*"` or empty list: returns all tools
+- If specific prefixes defined (e.g., `["file::", "memory::"]`): filters by prefix match
+- Wildcard patterns are stripped (e.g., `"file::*"` becomes `"file::"`)
+
+---
+
+## Configuration
+
+### AgentConfig Type
+
+```rust
+struct AgentConfig {
+    id: Option<String>,
+    name: String,
+    description: Option<String>,
+    model: Option<ModelConfig>,
+    system_prompt: Option<String>,
+    capabilities: Option<Capabilities>,
+    resources: Option<Resources>,
+    tags: Option<Vec<String>>,
+}
+
+struct ModelConfig {
+    provider: Option<String>,
+    model: Option<String>,
+    max_tokens: Option<u64>,
+}
+
+struct Capabilities {
+    tools: Vec<String>,
+    memory_scopes: Option<Vec<String>>,
+    network_hosts: Option<Vec<String>>,
+}
+
+struct Resources {
+    max_tokens_per_hour: Option<u64>,
+}
+```
+
+### Constants
+
+- **MAX_ITERATIONS**: 50 - Maximum tool execution iterations per chat request
+- **Default Session ID**: `default:{agentId}` - Auto-generated if not provided
+
+---
+
+## Event Publishing
+
+The agent-core worker publishes lifecycle events to the `agent.lifecycle` topic:
+
+```json
+{
+  "type": "created" | "deleted",
+  "agentId": "agent-id-here"
+}
+```
+
+## Queue Triggers
+
+The agent::chat function is triggered by messages published to the `agent.inbox` topic, enabling async agent message processing.

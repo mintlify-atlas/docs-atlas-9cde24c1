@@ -1,0 +1,429 @@
+---
+title: Session Replay
+description: Record and replay full agent sessions for debugging, analysis, and optimization
+---
+
+# Session Replay
+
+AgentOS session replay allows you to record every action an agent takes during a conversation — LLM calls, tool invocations, memory operations — and replay them later for debugging, cost analysis, and performance optimization.
+
+## Overview
+
+Implemented in `src/session-replay.ts:1`, session replay provides:
+
+- **Action-level recording** - Capture LLM calls, tool executions, and results
+- **Duration tracking** - Measure time spent on each operation
+- **Iteration counting** - Track agent reasoning loops
+- **Cost analysis** - Aggregate token usage and costs
+- **Search and filtering** - Find sessions by agent, tool, or time range
+
+## Recording Actions
+
+Actions are automatically recorded by the agent loop, but you can also record manually:
+
+<CodeGroup>
+
+```typescript Manual Recording
+import { trigger } from "iii-sdk";
+
+await trigger("replay::record", {
+  sessionId: "session-abc-123",
+  agentId: "default",
+  action: "tool_call",
+  data: {
+    toolId: "web_search",
+    args: { query: "AgentOS architecture" },
+    result: "Found 10 results..."
+  },
+  durationMs: 324,
+  iteration: 1
+});
+```
+
+```typescript Recording LLM Call
+await trigger("replay::record", {
+  sessionId: "session-abc-123",
+  agentId: "code-agent",
+  action: "llm_call",
+  data: {
+    model: "claude-opus-4",
+    prompt: "Analyze this code...",
+    usage: {
+      inputTokens: 1200,
+      outputTokens: 450,
+      total: 1650,
+      cost: 0.0247
+    }
+  },
+  durationMs: 2340,
+  iteration: 2
+});
+```
+
+```typescript Recording Tool Result
+await trigger("replay::record", {
+  sessionId: "session-abc-123",
+  agentId: "default",
+  action: "tool_result",
+  data: {
+    toolId: "file_read",
+    success: true,
+    output: "File contents..."
+  },
+  durationMs: 12,
+  iteration: 3
+});
+```
+
+```typescript Recording Memory Operation
+await trigger("replay::record", {
+  sessionId: "session-abc-123",
+  agentId: "default",
+  action: "memory_op",
+  data: {
+    operation: "store",
+    key: "recent_findings",
+    valueLength: 542
+  },
+  durationMs: 8,
+  iteration: 3
+});
+```
+
+</CodeGroup>
+
+## Action Types
+
+From `src/session-replay.ts:9`:
+
+- **`llm_call`** - LLM inference requests
+- **`tool_call`** - Tool invocation
+- **`tool_result`** - Tool execution result
+- **`memory_op`** - Memory store/recall operations
+
+## Retrieving Session Replay
+
+### Get Full Replay
+
+```typescript
+const replay = await trigger("replay::get", {
+  sessionId: "session-abc-123"
+});
+
+console.log(replay);
+// [
+//   {
+//     sessionId: "session-abc-123",
+//     agentId: "default",
+//     action: "llm_call",
+//     data: { model: "claude-opus-4", usage: {...} },
+//     durationMs: 2340,
+//     timestamp: 1709876543210,
+//     iteration: 1,
+//     sequence: 1
+//   },
+//   {
+//     action: "tool_call",
+//     data: { toolId: "web_search", args: {...} },
+//     durationMs: 324,
+//     iteration: 2,
+//     sequence: 2
+//   },
+//   // ... more actions
+// ]
+```
+
+Actions are sorted by sequence number (`src/session-replay.ts:92`).
+
+### Get Summary with Statistics
+
+```typescript
+const summary = await trigger("replay::summary", {
+  sessionId: "session-abc-123"
+});
+
+console.log(summary);
+// {
+//   sessionId: "session-abc-123",
+//   agentId: "default",
+//   totalDuration: 5234,     // Total milliseconds
+//   iterations: 4,           // Number of reasoning loops
+//   toolCalls: 7,            // Tools invoked
+//   tokensUsed: 4230,        // Total tokens across LLM calls
+//   cost: 0.0893,            // Total cost in dollars
+//   tools: [                 // Unique tools used
+//     "web_search",
+//     "file_read",
+//     "code_analyze"
+//   ],
+//   actionCount: 15          // Total recorded actions
+// }
+```
+
+From `src/session-replay.ts:165-207`, the summary aggregates:
+- Total duration
+- Max iteration (reasoning loops)
+- Token usage from LLM calls
+- Cost from LLM calls
+- Unique tools used
+
+## Searching Sessions
+
+### Search by Agent
+
+```typescript
+const sessions = await trigger("replay::search", {
+  agentId: "code-agent",
+  limit: 10
+});
+
+console.log(sessions);
+// [
+//   {
+//     sessionId: "session-xyz-789",
+//     agentId: "code-agent",
+//     actionCount: 23,
+//     startTime: 1709876543210,
+//     endTime: 1709876548444
+//   },
+//   // ... more sessions
+// ]
+```
+
+### Search by Tool Usage
+
+```typescript
+const sessions = await trigger("replay::search", {
+  toolUsed: "web_search",
+  limit: 20
+});
+```
+
+From `src/session-replay.ts:134-138`, only sessions with `tool_call` actions matching the toolId are returned.
+
+### Search by Time Range
+
+```typescript
+const sessions = await trigger("replay::search", {
+  timeRange: {
+    from: Date.now() - 24 * 60 * 60 * 1000,  // 24 hours ago
+    to: Date.now()
+  },
+  limit: 50
+});
+```
+
+### Combined Search
+
+```typescript
+const sessions = await trigger("replay::search", {
+  agentId: "code-agent",
+  toolUsed: "file_read",
+  timeRange: {
+    from: Date.now() - 7 * 24 * 60 * 60 * 1000,  // Last 7 days
+    to: Date.now()
+  },
+  limit: 10
+});
+```
+
+## Real-World Example: Debugging Slow Agent
+
+```typescript
+// 1. Find recent sessions for the slow agent
+const sessions = await trigger("replay::search", {
+  agentId: "research-agent",
+  timeRange: {
+    from: Date.now() - 60 * 60 * 1000,  // Last hour
+    to: Date.now()
+  },
+  limit: 5
+});
+
+console.log("Recent sessions:", sessions);
+
+// 2. Get detailed replay for the slowest session
+const slowestSession = sessions.reduce((prev, curr) => 
+  (curr.endTime - curr.startTime) > (prev.endTime - prev.startTime) ? curr : prev
+);
+
+const replay = await trigger("replay::get", {
+  sessionId: slowestSession.sessionId
+});
+
+// 3. Analyze where time was spent
+const byAction = replay.reduce((acc, entry) => {
+  acc[entry.action] = (acc[entry.action] || 0) + entry.durationMs;
+  return acc;
+}, {} as Record<string, number>);
+
+console.log("Time by action type:", byAction);
+// {
+//   llm_call: 15234,
+//   tool_call: 8932,
+//   tool_result: 124,
+//   memory_op: 45
+// }
+
+// 4. Find the slowest individual operations
+const slowest = replay
+  .sort((a, b) => b.durationMs - a.durationMs)
+  .slice(0, 5);
+
+console.log("Slowest operations:");
+for (const op of slowest) {
+  console.log(`${op.action} - ${op.durationMs}ms`, op.data);
+}
+
+// 5. Get cost analysis
+const summary = await trigger("replay::summary", {
+  sessionId: slowestSession.sessionId
+});
+
+console.log(`Total cost: $${summary.cost}`);
+console.log(`Tokens used: ${summary.tokensUsed}`);
+console.log(`Iterations: ${summary.iterations}`);
+```
+
+## Cost Analysis Across Sessions
+
+```typescript
+// Analyze costs for an agent over the last day
+const sessions = await trigger("replay::search", {
+  agentId: "research-agent",
+  timeRange: {
+    from: Date.now() - 24 * 60 * 60 * 1000,
+    to: Date.now()
+  },
+  limit: 200  // Max limit
+});
+
+let totalCost = 0;
+let totalTokens = 0;
+let totalSessions = sessions.length;
+
+for (const session of sessions) {
+  const summary = await trigger("replay::summary", {
+    sessionId: session.sessionId
+  });
+  totalCost += summary.cost || 0;
+  totalTokens += summary.tokensUsed || 0;
+}
+
+console.log(`24-hour cost analysis:`);
+console.log(`- Sessions: ${totalSessions}`);
+console.log(`- Total cost: $${totalCost.toFixed(4)}`);
+console.log(`- Total tokens: ${totalTokens.toLocaleString()}`);
+console.log(`- Avg cost/session: $${(totalCost / totalSessions).toFixed(4)}`);
+console.log(`- Avg tokens/session: ${Math.round(totalTokens / totalSessions)}`);
+```
+
+## Sequence Counter
+
+From `src/session-replay.ts:42-50`, each session has a monotonically increasing counter:
+
+```typescript
+const updated = await trigger("state::update", {
+  scope: "replay",
+  key: `${sessionId}:counter`,
+  operations: [{ type: "increment", path: "value", value: 1 }],
+  upsert: { value: 1 }
+});
+
+const sequence = updated?.value || Date.now();
+```
+
+This ensures actions are ordered correctly even with concurrent writes.
+
+## HTTP API Endpoints
+
+```bash
+# Get full replay
+curl http://localhost:3111/api/replay/session-abc-123
+
+# Get summary
+curl http://localhost:3111/api/replay/session-abc-123/summary
+
+# Search sessions
+curl "http://localhost:3111/api/replay/search?agentId=default&limit=10"
+
+# Search by tool
+curl "http://localhost:3111/api/replay/search?toolUsed=web_search&limit=20"
+
+# Search by time range
+curl "http://localhost:3111/api/replay/search?timeRange.from=1709876000000&timeRange.to=1709962400000"
+```
+
+## CLI Commands
+
+From the README (`workspace/source/README.md:362-364`):
+
+```bash
+agentos replay get <session>         # Get full session replay
+agentos replay list [--agent ID]    # List all replays, optionally filtered
+agentos replay summary <session>    # Get replay summary with stats
+```
+
+## Limits
+
+From `src/session-replay.ts:113`:
+
+- **Max search results**: 200 sessions
+- **Default search limit**: 50 sessions
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Record critical operations">
+    Focus on LLM calls and tool executions. Memory operations are lightweight and optional.
+  </Accordion>
+
+  <Accordion title="Include duration measurements">
+    Always measure and record `durationMs` for performance analysis.
+  </Accordion>
+
+  <Accordion title="Track iteration count">
+    Use the `iteration` field to understand reasoning loop depth.
+  </Accordion>
+
+  <Accordion title="Search before analyzing">
+    Use `replay::search` to find interesting sessions, then use `replay::get` for details.
+  </Accordion>
+
+  <Accordion title="Monitor costs regularly">
+    Use `replay::summary` to track token usage and costs per session.
+  </Accordion>
+
+  <Accordion title="Clean up old replays">
+    Implement a retention policy to delete old replay data and manage storage.
+  </Accordion>
+</AccordionGroup>
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Debugging" icon="bug">
+    Replay failed sessions to understand what went wrong and where
+  </Card>
+  <Card title="Performance Optimization" icon="gauge-high">
+    Identify slow operations and reduce latency
+  </Card>
+  <Card title="Cost Analysis" icon="dollar-sign">
+    Track token usage and costs across agents and time periods
+  </Card>
+  <Card title="Agent Training" icon="graduation-cap">
+    Analyze successful sessions to improve prompts and workflows
+  </Card>
+  <Card title="Compliance & Auditing" icon="shield-check">
+    Maintain audit trails of agent actions for security reviews
+  </Card>
+  <Card title="Tool Usage Analytics" icon="chart-line">
+    Understand which tools agents use most frequently
+  </Card>
+</CardGroup>
+
+## Related Features
+
+- [Swarms](/advanced/swarms) - Record swarm coordination patterns
+- [Knowledge Graph](/advanced/knowledge-graph) - Track KG modifications in replay
+- [Security](/security/audit) - Combine with audit logs for full traceability
