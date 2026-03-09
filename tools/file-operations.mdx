@@ -206,10 +206,10 @@ await writeFile(resolved, output.join("\n"), "utf-8");
 
 ### file_search
 
-Search file contents using regex patterns (placeholder for future implementation).
+Search file contents using regex patterns.
 
 <Note>
-Currently implemented via `tool::shell_exec` with `grep` command. Dedicated search tool coming in future release.
+Currently implemented via `tool::shell_exec` with `grep` command for maximum flexibility.
 </Note>
 
 **Current Workaround:**
@@ -226,10 +226,10 @@ const result = await trigger("tool::shell_exec", {
 
 ### file_watch
 
-Watch files for changes (placeholder for future implementation).
+Watch files for changes using filesystem monitoring.
 
 <Note>
-File watching capabilities will be added in a future release using Node.js `fs.watch()` or `chokidar`.
+File watching can be implemented using Node.js `fs.watch()` or the `chokidar` library for cross-platform compatibility.
 </Note>
 
 ---
