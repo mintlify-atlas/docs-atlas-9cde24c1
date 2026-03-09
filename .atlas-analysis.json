@@ -1,0 +1,218 @@
+{
+  "projectType": "framework",
+  "projectName": "AgentOS",
+  "projectDescription": "Agent Operating System built on three primitives: Worker, Function, Trigger",
+  "theme": "aspen",
+  "primaryColor": "#eec112",
+  "lightColor": "#7b640c",
+  "darkColor": "#050404",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/overview",
+              "concepts/worker",
+              "concepts/function",
+              "concepts/trigger",
+              "concepts/architecture"
+            ]
+          },
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/overview",
+              "cli/agent-commands",
+              "cli/workflow-commands",
+              "cli/config-commands",
+              "cli/security-commands"
+            ]
+          },
+          {
+            "group": "Tools & Capabilities",
+            "pages": [
+              "tools/overview",
+              "tools/file-operations",
+              "tools/web-tools",
+              "tools/code-tools",
+              "tools/profiles"
+            ]
+          },
+          {
+            "group": "Control Plane",
+            "pages": [
+              "control-plane/overview",
+              "control-plane/realm",
+              "control-plane/hierarchy",
+              "control-plane/directive",
+              "control-plane/mission",
+              "control-plane/ledger",
+              "control-plane/council",
+              "control-plane/pulse",
+              "control-plane/bridge"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/overview",
+              "security/rbac",
+              "security/audit-chain",
+              "security/sandboxing",
+              "security/vault"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/swarms",
+              "advanced/knowledge-graph",
+              "advanced/session-replay",
+              "advanced/a2a-protocol",
+              "advanced/mcp-integration",
+              "advanced/skillkit"
+            ]
+          },
+          {
+            "group": "Templates & Examples",
+            "pages": [
+              "templates/agents",
+              "templates/hands",
+              "templates/workflows",
+              "templates/integrations"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Rust API",
+            "pages": [
+              "api/rust/agent-core",
+              "api/rust/security",
+              "api/rust/memory",
+              "api/rust/llm-router"
+            ]
+          },
+          {
+            "group": "TypeScript API",
+            "pages": [
+              "api/typescript/agent-core",
+              "api/typescript/tools",
+              "api/typescript/security",
+              "api/typescript/workflow"
+            ]
+          },
+          {
+            "group": "REST API",
+            "pages": [
+              "api/rest/overview",
+              "api/rest/chat",
+              "api/rest/agents",
+              "api/rest/workflows"
+            ]
+          },
+          {
+            "group": "LLM Providers",
+            "pages": [
+              "api/llm/overview",
+              "api/llm/providers",
+              "api/llm/models",
+              "api/llm/routing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Channels",
+        "groups": [
+          {
+            "group": "Channel Adapters",
+            "pages": [
+              "channels/overview",
+              "channels/messaging",
+              "channels/social",
+              "channels/custom"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Developer Guide",
+            "pages": [
+              "development/setup",
+              "development/creating-workers",
+              "development/creating-tools",
+              "development/creating-agents",
+              "development/testing"
+            ]
+          },
+          {
+            "group": "Migration",
+            "pages": [
+              "development/migration/overview",
+              "development/migration/langchain",
+              "development/migration/openclaw"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Worker-Function-Trigger primitives",
+    "60+ built-in tools across multiple categories",
+    "25 LLM providers with intelligent routing",
+    "Multi-agent swarm coordination",
+    "Advanced security with RBAC and audit chain",
+    "Control plane for orchestration",
+    "45 agent templates and 7 autonomous hands",
+    "40 channel adapters for messaging platforms",
+    "Knowledge graph and session replay",
+    "Multi-language support (Rust, TypeScript, Python)"
+  ],
+  "publicApiSurface": [
+    "agent::chat",
+    "agent::create",
+    "agent::list",
+    "tool::file_read",
+    "tool::web_search",
+    "security::check_capability",
+    "memory::store",
+    "memory::recall",
+    "llm::route",
+    "workflow::create",
+    "swarm::create",
+    "kg::add_entity",
+    "vault::set",
+    "agentos init",
+    "agentos start",
+    "agentos chat",
+    "agentos agent new",
+    "agentos workflow run",
+    "realm::create",
+    "hierarchy::set",
+    "directive::create",
+    "mission::create",
+    "ledger::set_budget",
+    "council::submit",
+    "pulse::register",
+    "bridge::invoke"
+  ]
+}
